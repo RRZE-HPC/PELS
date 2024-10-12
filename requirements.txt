@@ -1,0 +1,5 @@
+numpy
+scipy>=1.12.0
+numba
+pytest
+parameterized
