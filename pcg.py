@@ -221,7 +221,7 @@ if __name__ == '__main__':
         # building preconditioners typically requires a certain format,
         # in our case, the poly_op class uses scipy functions tril and triu,
         # which are not implemented by the sellcs_matrix class.
-        A_prec = poly_op(A_csr, args.poly_k)
+        A_prec = poly_op(A_csr, args.poly_k, args.use_RACE, args.cache_size)
         if A_prec.mpkHandle != None:
             b = b[A_prec.permute]
             A_csr = A_csr[A_prec.permute[:,None], A_prec.permute]

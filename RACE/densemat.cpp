@@ -179,10 +179,10 @@ bool checkEqual(const densemat* lhs, const densemat* rhs, double tol, bool relat
             double dev = fabs((lhs->val[col*nrows+row]-rhs->val[col*nrows+row])/denom);
             if( dev > tol )
             {
-                char* errType = "absolute";
+                char *errType = (char*)"absolute";
                 if(relative)
                 {
-                    errType = "relative";
+                    errType = (char*)"relative";
                 }
                 printf("Densemat %s deviation @ idx (%d, %d) lhs = %.18f, rhs = %.18f, dev = %.18f\n", errType, row, col, lhs->val[col*nrows+row], rhs->val[col*nrows+row], dev);
                 return false;

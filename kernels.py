@@ -34,11 +34,12 @@ else:
     print('Using Numba kernels on CPU')
     import kernels_cpu as cpu
 
-if '-use_RACE' in sys.argv:
+if '-use_RACE' in sys.argv or 'USE_RACE' in os.environ:
     if not have_c_kernels:
         print('-use_RACE is ignored because C kernels are not available.')
     else:
         import race_mpk
+        print('RACE is loaded and available.')
         have_RACE = race_mpk.have_RACE
 
 # for benchmarking numpy/scipy implementations,
@@ -55,7 +56,7 @@ except:
     cuda = None
 
 def available_gpus():
-    if cuda is None:
+    if cuda is None or (os.environ.get('USE_CPU')=="1" or os.environ.get('USE_CPU')=="True"):
         return 0
     if cuda.is_available()==False:
         return 0
@@ -363,7 +364,7 @@ def perf_report(type):
     total_calls = 0
 
     print('--------\t-----\t---------------\t---------------\t---------------\t---------------')
-    print('kernel  \tcalls\t bw_meas       \t bw_roofline   \t t_meas/call   \tt_roofline/call')
+    print('kernel  \tcalls\t bw_meas       \t meas          \t t_meas/call   \tt_roofline/call')
     print('========\t=====\t===============\t===============\t===============\t===============')
     for kern in ('dot', 'axpby', 'spmv'):
         if calls[kern]>0:
@@ -374,8 +375,8 @@ def perf_report(type):
                     (kern, calls[kern], (load[kern]+store[kern])*1e-9/time[kern], bench[bench_map[kern]], time[kern]/calls[kern], (load[kern]+store[kern])*1e-9/bench[bench_map[kern]]/calls[kern]))
                 t_mod += (load[kern]+store[kern])*1e-9/bench[bench_map[kern]]
             else:
-                print('%8s\t%5d\t%8.4g GB/s\t   -    \t%8.4g s \t   -    '%
-                    (kern, calls[kern], (load[kern]+store[kern])*1e-9/time[kern], time[kern]/calls[kern]))
+                print('%8s\t%5d\t%8.4g GB/s\t%8.4g s \t%8.4g s \t'%
+                    (kern, calls[kern], (load[kern]+store[kern])*1e-9/time[kern], time[kern], time[kern]/calls[kern]))
 
     print('--------\t-----\t---------------\t---------------\t---------------\t---------------')
     if have_bench:

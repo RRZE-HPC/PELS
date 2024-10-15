@@ -54,6 +54,7 @@ struct kernelArg
 };
 
 //convenience macros
+#undef ENCODE_TO_VOID
 #define ENCODE_TO_VOID(mat_en, x_en, y_en, power_en)\
     kernelArg *arg_encode = new kernelArg;\
     arg_encode->mat = mat_en;\
@@ -63,6 +64,7 @@ struct kernelArg
     void* voidArg = (void*) arg_encode;\
 
 
+#undef DECODE_FROM_VOID
 #define DECODE_FROM_VOID(voidArg)\
     kernelArg* arg_decode = (kernelArg*) voidArg;\
     sparsemat* mat = arg_decode->mat;\
@@ -70,6 +72,7 @@ struct kernelArg
     double* x = arg_decode->x;\
     int power = arg_decode->power;
 
+#undef DELETE_ARG
 #define DELETE_ARG()\
     delete arg_encode;\
 

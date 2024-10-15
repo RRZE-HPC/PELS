@@ -44,7 +44,7 @@ class poly_op:
 
     '''
 
-    def __init__(self, A, poly_k, cache_size=30):
+    def __init__(self, A, poly_k, use_RACE=False, cache_size=30):
         self.k = poly_k
         self.shape = A.shape
         self.dtype = A.dtype
@@ -56,7 +56,7 @@ class poly_op:
         self.U = -triu(self.A1,1).tocsr()
         self.mpkHandle = None
         self.use_RACE = False
-        if have_RACE and '-use_RACE' in sys.argv:
+        if have_RACE and use_RACE:
             self.use_RACE = True
         self.permute =None
         self.unpermute = None

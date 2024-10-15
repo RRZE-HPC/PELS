@@ -30,7 +30,6 @@ class sellcs_matrix:
 
         self.C = C
         self.sigma = sigma
-
         if A_csr != None:
             self.shape = A_csr.shape
             self.nnz = A_csr.nnz
@@ -52,7 +51,7 @@ class sellcs_matrix:
         out += 'data='+str(self.data)+'\n'
         return out
 
-@jit(nopython=True, parallel=True)
+@jit(nopython=True, parallel=False)
 def csr_to_sellcs(A_indptr, A_data, A_indices, C, sigma):
     '''
     internal utility function to efficiently convert CSR matrix arrays to SELL-C-sigma format.

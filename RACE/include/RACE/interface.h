@@ -224,6 +224,7 @@ struct matValArg
     double *x;
 };
 
+#undef ENCODE_ARG
 #define ENCODE_ARG(_nrow_, _rowPtr_, _col_, _val_, _x_)\
     matValArg *newArg_ = new matValArg;\
     newArg_->nrow = _nrow_;\
@@ -233,6 +234,7 @@ struct matValArg
     newArg_->x = _x_;\
     void *voidArg = (void*) newArg_;
 
+#undef DECODE_ARG
 #define DECODE_ARG(_voidArg_)\
     matValArg *nonVoidArg_ = (matValArg*) _voidArg_;\
     int nrow = nonVoidArg_->nrow;\
@@ -241,6 +243,7 @@ struct matValArg
     double* val = nonVoidArg_->val;\
     double* x = nonVoidArg_->x;\
 
+#undef DELETE_ARG
 #define DELETE_ARG()\
     delete newArg_;
 
@@ -253,7 +256,7 @@ struct matValNumaLocalArg
     double *x;
 };
 
-
+#undef ENCODE_NUMA_LOCAL_ARG
 #define ENCODE_NUMA_LOCAL_ARG(_nrow_, _rowPtr_, _col_, _val_, _x_)\
     matValNumaLocalArg *newArg_ = new matValNumaLocalArg;\
     newArg_->nrow = _nrow_;\
@@ -263,6 +266,7 @@ struct matValNumaLocalArg
     newArg_->x = _x_;\
     void *voidArg = (void*) newArg_;
 
+#undef DECODE_NUMA_LOCAL_ARG
 #define DECODE_NUMA_LOCAL_ARG(_voidArg_)\
     matValNumaLocalArg *nonVoidArg_ = (matValNumaLocalArg*) _voidArg_;\
     int nrow = nonVoidArg_->nrow;\

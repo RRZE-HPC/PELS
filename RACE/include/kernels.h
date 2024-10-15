@@ -16,7 +16,6 @@
 #include "sparsemat.h"
 #include "densemat.h"
 #include <complex>
-#include <mkl.h>
 
 struct kernelArg
 {
@@ -55,13 +54,6 @@ void plain_spmv(sparsemat* mat, densemat* x);
 void plain_spmv_only_highest(sparsemat* mat, densemat* x, int power);
 void plain_spmv_numa(NUMAmat* mat, densemat* x);
 
-
-void mkl_spmv(densemat* b, sparsemat* mat, densemat* x, bool symm=false);
-void mkl_spmv(sparsemat* mat, densemat* x, bool symm=false);
-sparse_matrix_t* mkl_ie_setup(sparsemat* mat, int niter, bool symm=false);
-void mkl_ie_spmv(densemat* b, sparse_matrix_t* mat, densemat* x, bool symm=false);
-void mkl_ie_spmv(sparse_matrix_t* mat, densemat* x, bool symm=false);
-void mkl_ie_free(sparse_matrix_t* A);
 void matPower(sparsemat* A, int power, densemat *x);
 void matPower_only_highest(sparsemat* A, int power, densemat *x);
 void matPowerNuma(NUMAmat* A, int power, densemat *x);
@@ -82,6 +74,7 @@ void matPower_split_destroy(splitHandle* handle);
 void matPower_split(splitHandle *handle, int power, densemat *x);
 
 //convenience macros
+#undef ENCODE_TO_VOID
 #define ENCODE_TO_VOID(mat_en, b_en, x_en)\
     kernelArg *arg_encode = new kernelArg;\
     arg_encode->mat = mat_en;\
@@ -89,17 +82,18 @@ void matPower_split(splitHandle *handle, int power, densemat *x);
     arg_encode->x = x_en;\
     void* voidArg = (void*) arg_encode;\
 
+#undef DELETE_ARG
 #define DELETE_ARG()\
     delete arg_encode;\
 
-
+#undef DECODE_FROM_VOID
 #define DECODE_FROM_VOID(voidArg)\
     kernelArg* arg_decode = (kernelArg*) voidArg;\
     sparsemat* mat = arg_decode->mat;\
     densemat* b = arg_decode->b;\
     densemat* x = arg_decode->x;\
 
-
+#undef ENCODE_TO_VOID_NUMA
 #define ENCODE_TO_VOID_NUMA(mat_en, b_en, x_en)\
     kernelNumaArg *arg_encode = new kernelNumaArg;\
     arg_encode->mat = mat_en;\
@@ -107,7 +101,7 @@ void matPower_split(splitHandle *handle, int power, densemat *x);
     arg_encode->x = x_en;\
     void* voidArg = (void*) arg_encode;\
 
-
+#undef DECODE_FROM_VOID_NUMA
 #define DECODE_FROM_VOID_NUMA(voidArg)\
     kernelNumaArg* arg_decode = (kernelNumaArg*) voidArg;\
     NUMAmat* mat = arg_decode->mat;\
@@ -115,6 +109,7 @@ void matPower_split(splitHandle *handle, int power, densemat *x);
     densemat* x = arg_decode->x;\
 
 //convenience macros
+#undef ENCODE_TO_VOID_SPLIT
 #define ENCODE_TO_VOID_SPLIT(mat_en, a_en, b_en, x_en, _NAME_)\
     kernelArg_split *arg_encode_##_NAME_ = new kernelArg_split;\
     arg_encode_##_NAME_->mat = mat_en;\
@@ -123,13 +118,16 @@ void matPower_split(splitHandle *handle, int power, densemat *x);
     arg_encode_##_NAME_->x = x_en;\
     void* voidArg_##_NAME_ = (void*) arg_encode_##_NAME_;\
 
+#undef UPDATE_X_SPLIT
 #define UPDATE_X_SPLIT(x_en, _NAME_)\
     arg_encode_##_NAME_->x = x_en;\
 
+#undef DELETE_ARG_SPLIT
 #define DELETE_ARG_SPLIT(_NAME_)\
     delete arg_encode_##_NAME_;\
 
 
+#undef DECODE_FROM_VOID_SPLIT
 #define DECODE_FROM_VOID_SPLIT(voidArg, _NAME_)\
     kernelArg_split* arg_decode_##_NAME_ = (kernelArg_split*) voidArg;\
     sparsemat* mat = arg_decode_##_NAME_->mat;\

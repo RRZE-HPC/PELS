@@ -16,7 +16,6 @@
 #include <vector>
 #include <sys/mman.h>
 #include "config_eg.h"
-#include <mkl.h>
 #ifdef RACE_USE_SPMP
     #include "SpMP/CSR.hpp"
     #include "SpMP/reordering/BFSBipartite.hpp"
@@ -926,6 +925,27 @@ NUMAmat::~NUMAmat()
     delete[] col;
     delete[] val;
 }
+
+//convenience macros
+#undef ENCODE_TO_VOID
+#define ENCODE_TO_VOID(mat_en, b_en, x_en)\
+    kernelArg *arg_encode = new kernelArg;\
+    arg_encode->mat = mat_en;\
+    arg_encode->b = b_en;\
+    arg_encode->x = x_en;\
+    void* voidArg = (void*) arg_encode;\
+
+#undef DELETE_ARG
+#define DELETE_ARG()\
+    delete arg_encode;\
+
+#undef DECODE_FROM_VOID
+#define DECODE_FROM_VOID(voidArg)\
+    kernelArg* arg_decode = (kernelArg*) voidArg;\
+    sparsemat* mat = arg_decode->mat;\
+    densemat* b = arg_decode->b;\
+    densemat* x = arg_decode->x;\
+    
 
 inline void MAT_NUM_VEC_ACCESSES(int start, int end, int pow, int numa_domain, void* args)
 {
