@@ -116,11 +116,11 @@ class poly_op:
 
         See class description for details.
         '''
-        if self.mpkHandle is None:
+        if self.mpkHandle is None:   # RACE not there (i.e., no cache-blocked MPK)
             self._neumann(self.U, self.k, w, self.t1)
             spmv(self.A1, self.t1, self.t2)
             self._neumann(self.L, self.k, self.t2, v)
-        else:
+        else:                         # RACE is there (i.e., cache-blocked MPK)
             mpk_neumann_apply(self, w, v)
 
     def __del__(self):
