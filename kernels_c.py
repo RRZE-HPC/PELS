@@ -17,7 +17,7 @@ import os
 from kernels_cpu import memory_benchmarks, sell_spmv
 
 # compile the C code into a shared library
-os.system("make -j")
+os.system("make clean && make -j")
 
 
 # import the C library -> c_functions object

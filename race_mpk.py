@@ -5,7 +5,7 @@ from numpy.ctypeslib import as_ctypes, as_array
 mpk_c_functions = None
 have_RACE = False
 
-os.system("cd RACE && make -j")
+os.system("cd RACE && make clean && make -j")
 try:
     # import the C library -> c_functions object
     so_file = "RACE/lib/libmpk.so"

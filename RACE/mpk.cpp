@@ -14,6 +14,8 @@
 #include "densemat.h"
 #include <omp.h>
 
+#define VECTOR_LENGTH 4
+
 extern "C"
 {
 void* mpk_setup(int nrows, int *rowPtr, int *col, double *val, int power, double cacheSize, bool split)
@@ -87,8 +89,8 @@ inline void MPK_CALLBACK(int start, int end, int pow, int numa_domain, void* arg
         double *in_vec = (pow==1)?x:&(mat->workspace->val[offset]);
         const int nextOffset = (pow-1)*mat->nrows;
         double *out_vec = (pow==power)?y:&(mat->workspace->val[nextOffset]);
-        //#pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:tmp)
-        //#pragma nounroll
+       // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:tmp)
+       // #pragma nounroll
         for(int idx=mat->rowPtr[row]; idx<mat->rowPtr[row+1]; ++idx)
         {
             tmp += mat->val[idx]*in_vec[mat->col[idx]];
@@ -131,10 +133,10 @@ inline void MPK_NEUMANN_APPLY_CALLBACK(int start, int end, int pow, int numa_dom
             double *in_vec = (pow==1)?x:&(mat->workspace->val[offset]);
             const int nextOffset = (pow-1)*mat->nrows;
             double *out_vec = &(mat->workspace->val[nextOffset]);
-            //#pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:tmp)
-            //#pragma nounroll
             double tmp = 0;
             out_vec[row] = in_vec[row];
+           // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:tmp)
+           // #pragma nounroll
             for(int idx=mat->U->rowPtr[row]; idx<mat->U->rowPtr[row+1]; ++idx)
             {
                 tmp -= mat->U->val[idx]*in_vec[mat->U->col[idx]];
@@ -173,8 +175,8 @@ inline void MPK_NEUMANN_APPLY_CALLBACK(int start, int end, int pow, int numa_dom
             double *in_vec = &(mat->workspace->val[offset]);
             const int nextOffset = (pow-1)*mat->nrows;
             double *out_vec = &(mat->workspace->val[nextOffset]);
-            //#pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:tmp)
-            //#pragma nounroll
+          //  #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:tmp)
+          //  #pragma nounroll
             for(int idx=mat->L->rowPtr[row]; idx<mat->L->rowPtr[row+1]; ++idx)
             {
                 tmp += mat->L->val[idx]*in_vec[mat->L->col[idx]];
@@ -198,10 +200,10 @@ inline void MPK_NEUMANN_APPLY_CALLBACK(int start, int end, int pow, int numa_dom
             double *in_vec = &(mat->workspace->val[offset]);
             const int nextOffset = (pow-1)*mat->nrows;
             double *out_vec = (pow==power)?y:&(mat->workspace->val[nextOffset]);
-            //#pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:tmp)
-            //#pragma nounroll
             double tmp = 0;
             out_vec[row] = in_vec[row];
+          //  #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:tmp)
+          //  #pragma nounroll
             for(int idx=mat->L->rowPtr[row]; idx<mat->L->rowPtr[row+1]; ++idx)
             {
                 tmp -= mat->L->val[idx]*in_vec[mat->L->col[idx]];

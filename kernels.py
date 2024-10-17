@@ -363,24 +363,17 @@ def perf_report(type):
     # total number of functions called
     total_calls = 0
 
-    print('--------\t-----\t---------------\t---------------\t---------------\t---------------')
-    print('kernel  \tcalls\t bw_meas       \t meas          \t t_meas/call   \tt_roofline/call')
-    print('========\t=====\t===============\t===============\t===============\t===============')
+    
+    print('--------\t-----\t---------------\t---------------\t---------------')
+    print('kernel  \tcalls\t bw_meas       \t meas          \t t_meas/call   ')
+    print('========\t=====\t===============\t===============\t===============')
     for kern in ('dot', 'axpby', 'spmv'):
         if calls[kern]>0:
             t_tot += time[kern]
             total_calls += calls[kern]
-            if have_bench:
-                print('%8s\t%5d\t%8.4g GB/s\t%8.4g GB/s\t%8.4g s \t%8.4g s '%
-                    (kern, calls[kern], (load[kern]+store[kern])*1e-9/time[kern], bench[bench_map[kern]], time[kern]/calls[kern], (load[kern]+store[kern])*1e-9/bench[bench_map[kern]]/calls[kern]))
-                t_mod += (load[kern]+store[kern])*1e-9/bench[bench_map[kern]]
-            else:
-                print('%8s\t%5d\t%8.4g GB/s\t%8.4g s \t%8.4g s \t'%
+            print('%8s\t%5d\t%8.4g GB/s\t%8.4g s \t%8.4g s \t'%
                     (kern, calls[kern], (load[kern]+store[kern])*1e-9/time[kern], time[kern], time[kern]/calls[kern]))
 
-    print('--------\t-----\t---------------\t---------------\t---------------\t---------------')
-    if have_bench:
-        print('%8s\t     \t               \t               \t %8.4g s \t %8.4g s'%('Total',t_tot, t_mod))
-    else:
-        print('%8s\t     \t               \t               \t %8.4g s \t%8s'%('Total',t_tot, '   n/a  '))
-    print('--------\t-----\t---------------\t---------------\t---------------\t---------------')
+    print('--------\t-----\t---------------\t---------------')
+    print('%8s\t     \t               \t               \t %8.4g s '%('Total',t_tot))
+    print('--------\t-----\t---------------\t---------------')
