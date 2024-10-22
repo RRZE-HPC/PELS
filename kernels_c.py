@@ -11,10 +11,8 @@
 import numpy as np
 from ctypes import *
 from numpy.ctypeslib import as_ctypes, as_array
+from numba import jit, prange, get_num_threads, float64
 import os
-
-# some stuff is missing here up to now:
-from kernels_cpu import memory_benchmarks, sell_spmv
 
 # compile the C code into a shared library
 os.system("make clean && make -j")
@@ -84,3 +82,46 @@ def multiple_axpbys(a, x, b, y, ntimes):
         axpby(a,x,b,y)
 
 
+        
+def memory_benchmarks():
+    benchmarks = {'label': 'undefined', 'triad': 0, 'load': 0, 'store': 0, 'copy': 0}
+    try:
+        with open('cpu.json', 'r') as f:
+            benchmarks = json.load(f)
+    except:
+        return benchmarks
+    nthreads = get_num_threads()
+    ncores_data = benchmarks['cores']
+    nnuma    = (nthreads+ncores_data-1)//ncores_data
+    if nthreads == ncores_data:
+        return benchmarks
+    else:
+        result = benchmarks.copy()
+        for k in result.keys():
+            if k != 'label':
+                result[k] *=nnuma
+        return result
+
+#Using NUMBA for SELL-SpMV
+@jit(nopython=True, parallel=True)
+def sell_spmv(valA, cptrA, colA, C, x, y):
+    '''
+    Usage: sell_spmv(valA, cptrA, colA, C, x, y) computes y=A*x for a sellcs.sellcs_matrix A,
+           where the members are extracted like this:
+           valA, cptrA, colA, C = A.data, cptrA, A.indices, A.C
+           Sorting of in and/or output vectors is **not performed** by this function:
+           If A.sigma>1, the user is responsible to provided x in permuted form and
+           "unpermute" y if desired.
+    '''
+    nchunks = len(cptrA)-1
+    nrows = x.size
+    for chunk in prange(nchunks):
+        offs = cptrA[chunk]
+        row0 = chunk*C
+        row1 = min(row0+C, nrows)
+        c    = row1-row0
+        w    = (cptrA[chunk+1]-offs)//c
+        #print('rows %d:%d, c=%d, w=%d'%(row0,row1,c,w))
+        y[row0:row1] = 0
+        for j in range(w):
+                y[row0:row1] += valA[offs+j*c:offs+(j+1)*c] * x[colA[offs+j*c:offs+(j+1)*c]]

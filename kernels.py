@@ -21,26 +21,18 @@ import os
 have_c_kernels = False
 have_RACE = False
 
-if '-c_kernels' in sys.argv or '-use_RACE' in sys.argv or 'USE_C_KERNELS' in os.environ or 'USE_RACE' in os.environ:
-    try:
-        import kernels_c as cpu
-        have_c_kernels=True
-        print('Using C kernels on CPU')
-    except:
-        import kernels_cpu as cpu
-        print('Failed to import/compile C kernels, you may need to adjust "make.inc".\n'+
-              'Falling back to numba-compiled kernels')
-else:
-    print('Using Numba kernels on CPU')
-    import kernels_cpu as cpu
+try:
+    import kernels_c as cpu
+    have_c_kernels=True
+    print('Using C kernels on CPU')
+except:
+    print('Failed to import/compile C kernels, you may need to adjust "make.inc".\n')
+
 
 if '-use_RACE' in sys.argv or 'USE_RACE' in os.environ:
-    if not have_c_kernels:
-        print('-use_RACE is ignored because C kernels are not available.')
-    else:
-        import race_mpk
-        print('RACE is loaded and available.')
-        have_RACE = race_mpk.have_RACE
+    import race_mpk
+    print('RACE is loaded and available.')
+    have_RACE = race_mpk.have_RACE
 
 # for benchmarking numpy/scipy implementations,
 # uncomment this line instead of the above:
