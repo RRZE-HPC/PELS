@@ -9,10 +9,82 @@
 #/*******************************************************************************************/
 
 import numpy as np
+from ctypes import *
+from numpy.ctypeslib import as_ctypes, as_array
 from numba import jit, prange, get_num_threads, float64
-import scipy
-import json
+import os
 
+#CPU kernels are written in C and compiled
+
+# compile the C code into a shared library
+os.system("make clean && make -j")
+
+
+# import the C library -> c_functions object
+so_file = "./libkernels.so"
+c_functions = CDLL(so_file)
+
+# convenient alias
+c_double_p = POINTER(c_double)
+c_int_p = POINTER(c_int)
+
+# need to explicitly set the argument types to avoid runtime errors for some reason...
+c_functions.csr_spmv.argtypes = [c_size_t, c_double_p, c_int_p, c_int_p, c_double_p, c_double_p]
+c_functions.axpby.argtypes = [c_size_t, c_double, c_double_p, c_double, c_double_p]
+c_functions.vscale.argtypes = [c_size_t, c_double_p, c_double_p, c_double_p]
+c_functions.dot.argtypes = [c_size_t, c_double_p, c_double_p]
+c_functions.dot.restype = c_double
+c_functions.init.argtypes = [c_size_t, c_double_p, c_double]
+c_functions.copy_vector.argtypes = [c_size_t, c_double_p, c_double_p]
+c_functions.copy_csr_arrays.argtypes = [c_size_t, c_double_p, c_int_p, c_int_p, c_double_p, c_int_p, c_int_p]
+
+
+def csr_spmv(valA, rptrA, colA, x, y):
+    N=y.shape[0]
+    c_functions.csr_spmv(N, as_ctypes(valA), as_ctypes(rptrA), as_ctypes(colA), as_ctypes(x), as_ctypes(y))
+
+def init(x, val):
+    N = x.size
+    c_functions.init(N, as_ctypes(x), val)
+
+def copy_vector(x):
+    N = x.size
+    y = np.empty_like(x)
+    c_functions.copy_vector(N, as_ctypes(x), as_ctypes(y))
+    return y
+
+def copy_csr_arrays(Adata, Aindptr, Aindices):
+    data = np.empty_like(Adata)
+    indices = np.empty_like(Aindices)
+    indptr = np.empty_like(Aindptr)
+    nrows = len(indptr)-1
+    nnz   = len(Adata)
+    c_functions.copy_csr_arrays(nrows,as_ctypes(Adata),as_ctypes(Aindptr),as_ctypes(Aindices),
+                as_ctypes(data),as_ctypes(indptr),as_ctypes(indices))
+    return data, indices, indptr
+
+def axpby(a,x,b,y):
+    N = x.size
+    c_functions.axpby(N, a, as_ctypes(x), b, as_ctypes(y))
+
+def dot(x,y):
+    N = x.size
+    s = c_functions.dot(N, as_ctypes(x), as_ctypes(y))
+    return s
+
+def vscale(v, x, y):
+    '''
+    Vector scaling y[i] = v[i]*x[i]
+    '''
+    N = x.size
+    c_functions.vscale(N, as_ctypes(v), as_ctypes(x), as_ctypes(y))
+
+def multiple_axpbys(a, x, b, y, ntimes):
+    for it in range(ntimes):
+        axpby(a,x,b,y)
+
+
+        
 def memory_benchmarks():
     benchmarks = {'label': 'undefined', 'triad': 0, 'load': 0, 'store': 0, 'copy': 0}
     try:
@@ -32,52 +104,7 @@ def memory_benchmarks():
                 result[k] *=nnuma
         return result
 
-
-@jit(nopython=True, parallel=True)
-def copy_vector(x):
-    y = np.empty_like(x)
-    for i in prange(x.size):
-        y[i] = x[i]
-    return y
-
-@jit((float64[:],float64[:],float64[:]),nopython=True, parallel=True)
-def vscale(v, x, y):
-    '''
-    Vector scaling y[i] = v[i]*x[i]
-    '''
-    for i in prange(x.size):
-        y[i] = v[i]*x[i]
-
-@jit(nopython=True, parallel=True)
-def copy_csr_arrays(Adata, Aindptr, Aindices):
-    data = np.empty_like(Adata)
-    indices = np.empty_like(Aindices)
-    indptr = np.empty_like(Aindptr)
-    nrows = len(indptr)-1
-    nnz   = len(Adata)
-    for i in prange(nrows):
-        indptr[i] = Aindptr[i]
-        indptr[i+1] = Aindptr[i+1]
-        for j in range(indptr[i], indptr[i+1]):
-            data[j] = Adata[j]
-            indices[j] = Aindices[j]
-    return data, indices, indptr
-
-@jit(nopython=True, parallel=True)
-def csr_spmv(valA,rptrA,colA, x, y):
-    '''
-    Usage:
-      - if A is a scipy.sparse.csr_matrix,
-      you can get the components by valA = A.data; rptrA = cptrA; colA = A.indices.
-      - x and y numpy arrays of size A.shape[0] and A.shape[1], respectively.
-
-      Then this function returns y = A*x
-    '''
-    for row in prange(len(rptrA)-1):
-        y[row] = 0
-        for j in range(rptrA[row], rptrA[row+1]):
-            y[row] += valA[j] * x[colA[j]]
-
+#Using NUMBA for SELL-SpMV
 @jit(nopython=True, parallel=True)
 def sell_spmv(valA, cptrA, colA, C, x, y):
     '''
@@ -100,22 +127,3 @@ def sell_spmv(valA, cptrA, colA, C, x, y):
         y[row0:row1] = 0
         for j in range(w):
                 y[row0:row1] += valA[offs+j*c:offs+(j+1)*c] * x[colA[offs+j*c:offs+(j+1)*c]]
-
-
-@jit(nopython=True, parallel=True)
-def init(x, val):
-    for i in prange(x.size):
-        x[i]=val
-
-@jit(nopython=True, parallel=True)
-def axpby(a,x,b,y):
-    for i in prange(x.size):
-        y[i]=a*x[i]+b*y[i]
-
-@jit(nopython=True, parallel=True)
-def dot(x,y):
-    s=0.0
-    for i in prange(x.size):
-        s += x[i]*y[i]
-    return s
-

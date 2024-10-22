@@ -22,7 +22,7 @@ have_c_kernels = False
 have_RACE = False
 
 try:
-    import kernels_c as cpu
+    import kernels_cpu as cpu
     have_c_kernels=True
     print('Using C kernels on CPU')
 except:
@@ -191,7 +191,7 @@ def spmv_c(A, x, y):
     '''
     This function explicitly calls the C variant of the CSR spmv.
     It is meant only for testing and benchmarking, if you want to use
-    the C kernels, import kernels_c as cpu at the beginning of this module.
+    the C kernels, import kernels_cpu as cpu at the beginning of this module.
     '''
     t0 = perf_counter()
     data = A.data
