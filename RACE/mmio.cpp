@@ -477,7 +477,7 @@ static char *mm_strdup(const char *s)
 char  *mm_typecode_to_str(MM_typecode matcode)
 {
     char buffer[MM_MAX_LINE_LENGTH];
-    char *types[4];
+    char const *types[4];
 	char *mm_strdup(const char *);
     int error =0;
 
