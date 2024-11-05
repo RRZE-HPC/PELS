@@ -64,7 +64,7 @@ class poly_op:
         if self.use_RACE:
             split=True
             highestPower=2*poly_k+1
-            print("Using RACE for cache blocking: cache_size=", cache_size, ", power=", highestPower)
+            print("Using RACE for cache blocking: cache_size=", cache_size)
             self.mpkHandle=mpk_setup(self.A1, highestPower, cache_size, split)
             self.permute=mpk_get_perm(self.mpkHandle, self.shape[0])
             self.unpermute = np.arange(self.shape[0])
