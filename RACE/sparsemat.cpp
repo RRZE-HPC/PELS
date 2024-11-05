@@ -23,6 +23,7 @@
 #include "timer.h"
 #include "kernels.h"
 #include "densemat.h"
+#include "mmio.h"
 
 sparsemat::sparsemat():nrows(0), nnz(0), ce(NULL), val(NULL), rowPtr(NULL), col(NULL), nnz_symm(0), rowPtr_symm(NULL), col_symm(NULL), val_symm(NULL), diagFirst(false), colorType("RACE"), colorBlockSize(64), colorDist(-1), ncolors(-1), colorPtr(NULL), partPtr(NULL), block_size(1), rcmInvPerm(NULL), rcmPerm(NULL), finalPerm(NULL), finalInvPerm(NULL), symm_hint(false), L(NULL), U(NULL), D(NULL)
 {
@@ -463,6 +464,7 @@ void sparsemat::doRCMPermute()
 
 int sparsemat::prepareForPower(int highestPower, double cacheSize, int nthreads, int smt, PinMethod pinMethod, int globalStartRow, int globalEndRow, std::string mtxType)
 {
+    //writeFile("matrix.mtx");
     //permute(rcmInvPerm, rcmPerm);
     //rcmPerm = NULL;
     //rcmInvPerm = NULL;
@@ -475,7 +477,7 @@ int sparsemat::prepareForPower(int highestPower, double cacheSize, int nthreads,
     if ((globalStartRow != -1) && (globalEndRow != -1))
         ce->passGlobalRows(globalStartRow, globalEndRow);
     STOP_TIMER(pre_process_kernel);
-    printf("Pre-processing time: cache size = %f, power = %d, RACE pre-processing time = %fs\n", cacheSize, highestPower, GET_TIMER(pre_process_kernel));
+    //printf("Pre-processing time: cache size = %f, power = %d, RACE pre-processing time = %fs\n", cacheSize, highestPower, GET_TIMER(pre_process_kernel));
 
     int *perm, *invPerm, permLen;
     ce->getPerm(&perm, &permLen);
@@ -554,7 +556,6 @@ void sparsemat::permute(int *_perm_, int*  _invPerm_, bool RACEalloc)
 
     newRowPtr[0] = 0;
 
-    printf("Initing rowPtr\n");
     if(!RACEalloc)
     {
         //NUMA init
@@ -573,7 +574,6 @@ void sparsemat::permute(int *_perm_, int*  _invPerm_, bool RACEalloc)
     {
         //first find newRowPtr; therefore we can do proper NUMA init
         int _perm_Idx=0;
-        printf("nrows = %d\n", nrows);
         for(int row=0; row<nrows; ++row)
         {
             //row _perm_utation
@@ -594,13 +594,11 @@ void sparsemat::permute(int *_perm_, int*  _invPerm_, bool RACEalloc)
     }
 
 
-    printf("Initing mtxVec\n");
     if(RACEalloc)
     {
         ce->numaInitMtxVec(newRowPtr, newCol, newVal, NULL);
     }
 
-    printf("Finished inting\n");
     if(_perm_ != NULL)
     {
         //with NUMA init
@@ -641,9 +639,9 @@ void sparsemat::permute(int *_perm_, int*  _invPerm_, bool RACEalloc)
     //free old _perm_utations
     //shouldn't delete since it belongs to Python
     //Probably it's GC will clean up
-    //delete[] val;
-    //delete[] rowPtr;
-    //delete[] col;
+    delete[] val;
+    delete[] rowPtr;
+    delete[] col;
 
 
     val = newVal;
@@ -745,6 +743,40 @@ bool sparsemat::doMETIS(int blocksize, int start_row, int end_row, int *initPerm
 #else
     return false;
 #endif
+}
+
+//write matrix market file
+bool sparsemat::writeFile(char* filename)
+{
+    int* row_1_based = new int[nnz];
+    int* col_1_based = new int[nnz];
+
+    //create row indices
+    for(int i=0; i<nrows; ++i)
+    {
+        for(int idx=rowPtr[i]; idx<rowPtr[i+1]; ++idx)
+        {
+            row_1_based[idx]=i+1;
+            col_1_based[idx]=col[idx]+1;
+
+            if(row_1_based[idx] < 1)
+            {
+                printf("row less than 1: value=%d at row=%d, idx=%d\n", i+1, i, idx);
+            }
+            if(col_1_based[idx] < 1)
+            {
+                printf("col less than 1: value=%d at row=%d,idx=%d\n", col[idx]+1, i, idx);
+            }
+
+        }
+    }
+
+    mm_write_mtx_crd(filename, nrows, nrows, nnz, row_1_based, col_1_based, val, "MCRG");
+
+    delete[] row_1_based;
+    delete[] col_1_based;
+
+    return true;
 }
 
 //here openMP threads are pinned according to

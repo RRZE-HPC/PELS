@@ -65,13 +65,16 @@ class poly_op:
             split=True
             highestPower=2*poly_k+1
             print("Using RACE for cache blocking: cache_size=", cache_size, ", power=", highestPower)
-            [self.mpkHandle,self.A1]=mpk_setup(self.A1, highestPower, cache_size, split)
+            self.mpkHandle=mpk_setup(self.A1, highestPower, cache_size, split)
             self.permute=mpk_get_perm(self.mpkHandle, self.shape[0])
             self.unpermute = np.arange(self.shape[0])
             self.unpermute[self.permute] = np.arange(self.shape[0])
             #permuteute all the objects
-            self.L=self.L[self.permute[:,None], self.permute]
-            self.U=self.U[self.permute[:,None], self.permute]
+            #A1 is not permuted, because it is not used if RACE is used
+            #self.L=self.L[self.permute[:,None], self.permute]
+            self.L = permute_csr(self.L, self.permute)
+            #self.U=self.U[self.permute[:,None], self.permute]
+            self.U = permute_csr(self.U, self.permute)
             #work-around for diagonal, since it is not subscriptable
             #not needed diagonal is one, due to normalization
             #A_prec.isqD = spdiags([1.0/np.sqrt(A.diagonal())], [0], m=A.shape[0], n=A.shape[1])

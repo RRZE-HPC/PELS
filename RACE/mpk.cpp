@@ -20,23 +20,27 @@ extern "C"
 {
 void* mpk_setup(int nrows, int *rowPtr, int *col, double *val, int power, double cacheSize, bool split)
 {
-    sparsemat* mat = new sparsemat;
+    sparsemat* python_mat = new sparsemat;
     int nnz=rowPtr[nrows];
-    mat->initCover(nrows, nnz, val, rowPtr, col);
+    python_mat->initCover(nrows, nnz, val, rowPtr, col);
+    
+    //deep copy the mat to RACE internal and RACE works with that
+    sparsemat* RACE_mat = new sparsemat;
+    RACE_mat->basicDeepCopy(python_mat);
     int nthreads = 1;
 #pragma omp parallel
     {
         nthreads=omp_get_num_threads();
     }
-    mat->prepareForPower(power, cacheSize, nthreads);
-    mat->workspace = new densemat(nrows, power);
+    RACE_mat->prepareForPower(power, cacheSize, nthreads);
+    RACE_mat->workspace = new densemat(nrows, power);
 
     if(split)
     {
-        mat->splitMatrixToLDU();
+        RACE_mat->splitMatrixToLDU();
     }
 
-    void* voidMat=(void*)mat;
+    void* voidMat=(void*)RACE_mat;
     return voidMat;
 }
 
@@ -45,6 +49,7 @@ int* mpk_getPerm(void* voidMat)
     sparsemat* mat = (sparsemat*) voidMat;
     return mat->finalPerm;
 }
+    
 }
 
 struct kernelArg

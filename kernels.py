@@ -229,9 +229,7 @@ def mpk_setup(A, power, cacheSize, split):
         indptr = A.indptr
         indices = A.indices
         mpk_handle=race_mpk.csr_mpk_setup(indptr, indices, data, power, cacheSize, split)
-        perm = mpk_get_perm(mpk_handle, A.shape[0])
-        A = A[:,perm][perm,:]
-        return mpk_handle, A
+        return mpk_handle
 
 def mpk_free(mpk_handle):
     if not have_RACE:
@@ -261,6 +259,15 @@ def clone(v):
         cpu.init(w,0.0)
     return w
 
+def permute_csr(X, perm):
+    if type(X) == scipy.sparse.csr_matrix:
+        data, indices, indptr = cpu.permute_csr_arrays(perm, X.data, X.indptr, X.indices)
+        A = scipy.sparse.csr_matrix((data, indices, indptr), shape=X.shape)
+        return A
+    else:
+        print("Error: permute_csr only applicable for scipy csr matrices. Retrning unpermuted matrix")
+        return X
+        
 def copy(X):
     '''
     Copy a vector or matrix (csr_matrix or sellcs_matrix)

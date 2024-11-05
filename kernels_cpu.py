@@ -37,6 +37,7 @@ c_functions.dot.restype = c_double
 c_functions.init.argtypes = [c_size_t, c_double_p, c_double]
 c_functions.copy_vector.argtypes = [c_size_t, c_double_p, c_double_p]
 c_functions.copy_csr_arrays.argtypes = [c_size_t, c_double_p, c_int_p, c_int_p, c_double_p, c_int_p, c_int_p]
+c_functions.permute_csr_arrays.argtypes = [c_int_p, c_size_t, c_double_p, c_int_p, c_int_p, c_double_p, c_int_p, c_int_p]
 
 
 def csr_spmv(valA, rptrA, colA, x, y):
@@ -60,6 +61,16 @@ def copy_csr_arrays(Adata, Aindptr, Aindices):
     nrows = len(indptr)-1
     nnz   = len(Adata)
     c_functions.copy_csr_arrays(nrows,as_ctypes(Adata),as_ctypes(Aindptr),as_ctypes(Aindices),
+                as_ctypes(data),as_ctypes(indptr),as_ctypes(indices))
+    return data, indices, indptr
+
+def permute_csr_arrays(perm, Adata, Aindptr, Aindices):
+    data = np.empty_like(Adata)
+    indices = np.empty_like(Aindices)
+    indptr = np.empty_like(Aindptr)
+    nrows = len(indptr)-1
+    nnz   = len(Adata)
+    c_functions.permute_csr_arrays(as_ctypes(perm), nrows, as_ctypes(Adata),as_ctypes(Aindptr),as_ctypes(Aindices),
                 as_ctypes(data),as_ctypes(indptr),as_ctypes(indices))
     return data, indices, indptr
 
