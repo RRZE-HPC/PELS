@@ -187,28 +187,6 @@ def spmv(A, x, y):
     store['spmv'] += 8*A.shape[0]
     flop['spmv'] += 2*A.nnz
 
-def spmv_c(A, x, y):
-    '''
-    This function explicitly calls the C variant of the CSR spmv.
-    It is meant only for testing and benchmarking, if you want to use
-    the C kernels, import kernels_cpu as cpu at the beginning of this module.
-    '''
-    t0 = perf_counter()
-    data = A.data
-    indptr = A.indptr
-    indices = A.indices
-    if type(A)==scipy.sparse.csr_matrix:
-        csr_spmv_c(A,x,y)
-    else:
-        raise TypeError('spmv C wrapper only implemented for scipy.sparse.csr_matrix')
-    t1 = perf_counter()
-    time['spmv']  += t1-t0
-    calls['spmv'] += 1
-    if calls['spmv']>0:
-        load['spmv']  += 12*A.nnz+8*(A.shape[0]+A.shape[1])
-        store['spmv'] += 8*A.shape[0]
-        flop['spmv'] += 2*A.nnz
-
 def diag_spmv(A, x, y):
     if cuda and is_cuda_array(x):
         gpu.vscale(A.cu_data, x, y)
@@ -236,6 +214,12 @@ def mpk_free(mpk_handle):
         raise AssertionError('RACE is not available, you may need to add the -use_RACE flag and/or install the RACE library.')
     race_mpk.csr_mpk_free(mpk_handle)
 
+def mpk(mpk_handle,k,x,y):
+    #t0 = perf_counter()
+    race_mpk.csr_mpk(mpk_handle, k, x, y)
+    #t1 = perf_counter()
+
+        
 def mpk_neumann_apply(polyHandle, x, y):
     t0 = perf_counter()
     k= polyHandle.k
@@ -364,7 +348,7 @@ def perf_report(type):
 
     
     print('--------\t-----\t---------------\t---------------\t---------------')
-    print('kernel  \tcalls\t bw_meas       \t meas          \t t_meas/call   ')
+    print('kernel  \tcalls\t bw_estimate   \t meas          \t t_meas/call   ')
     print('========\t=====\t===============\t===============\t===============')
     for kern in ('dot', 'axpby', 'spmv'):
         if calls[kern]>0:
