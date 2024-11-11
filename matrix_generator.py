@@ -73,3 +73,30 @@ def create_laplacian3d(nx,ny,nz):
     Dz=spdiags([-ez,2*ez,-ez],[-1,0,1],nz,nz)
     A=kron(kron(Dx,Iy), Iz) + kron(kron(Ix,Dy), Iz) + kron(Ix, kron(Iy,Dz))
     return A
+
+def create_laplacian3d_arrow(nx,ny,nz):
+    N=nx*ny*nz
+    ex=np.ones([nx])
+    ey=np.ones([ny])
+    ez=np.ones([nz])
+    Ix=eye(nx)
+    Iy=eye(ny)
+    Iz=eye(nz)
+    Dx=spdiags([-ex,2*ex,-ex],[-1,0,1],nx,nx)
+    Dy=spdiags([-ey,2*ey,-ey],[-1,0,1],ny,ny)
+    Dz=spdiags([-ez,2*ez,-ez],[-1,0,1],nz,nz)
+    A=kron(kron(Dx,Iy), Iz) + kron(kron(Ix,Dy), Iz) + kron(Ix, kron(Iy,Dz))
+    rowInd=np.zeros(2*N-1, dtype=int)
+    colInd=np.zeros(2*N-1, dtype=int)
+    data=-1*np.ones(2*N-1)
+    #create botom row
+    for i in range(0,N):
+        rowInd[i]=N-1
+        colInd[i]=i
+    #create right row
+    for i in range(0,N-1):
+        colInd[N+i]=N-1
+        rowInd[N+i]=i
+        
+    arrow=csr_matrix((data, (rowInd, colInd)), shape=(N,N))
+    return A+arrow
