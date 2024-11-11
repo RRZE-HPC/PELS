@@ -348,7 +348,7 @@ def perf_report(type):
 
     
     print('--------\t-----\t---------------\t---------------\t---------------')
-    print('kernel  \tcalls\t bw_estimate   \t meas          \t t_meas/call   ')
+    print('kernel  \tcalls\t bw_estimate   \t t_meas        \t t_meas/call   ')
     print('========\t=====\t===============\t===============\t===============')
     for kern in ('dot', 'axpby', 'spmv'):
         if calls[kern]>0:
