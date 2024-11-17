@@ -40,7 +40,7 @@ def parse_matstring(input):
 
 
 
-def create_matrix(matstring, arrow=False):
+def create_matrix(matstring, imbal=False):
 
     label, nx, ny, nz = parse_matstring(matstring)
     if label == 'Laplace' and nz == 1:
@@ -50,7 +50,7 @@ def create_matrix(matstring, arrow=False):
     else:
         raise(ValueError('create_matrix can only build "Laplace<nx>x<ny>", "Laplace<nx>x<ny>x<nz>",  matrices up to now.'))
     
-    if(arrow==False):
+    if(imbal==False):
         return A
     else:
         N=A.shape[0]
