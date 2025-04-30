@@ -34,6 +34,11 @@ if '-use_RACE' in sys.argv or 'USE_RACE' in os.environ:
     print('RACE is loaded and available.')
     have_RACE = race_mpk.have_RACE
 
+if '-use_INTEL_MKL' in sys.argv or 'USE_INTEL_MKL' in os.environ:
+    import intel_mkl
+    print('Intel MKL is loaded and available.')
+    have_MKL = intel_mkl.have_MKL
+    
 # for benchmarking numpy/scipy implementations,
 # uncomment this line instead of the above:
 #import kernels_numpy as cpu
@@ -194,7 +199,6 @@ def diag_spmv(A, x, y):
         cpu.vscale(A.data.reshape(x.size), x, y)
 
 def mpk_get_perm(mpk_handle, N):
-
     if not have_RACE:
         raise AssertionError('RACE is not available, you may need to add the -use_RACE flag and/or install the RACE library.')
     return race_mpk.csr_mpk_get_perm(mpk_handle, N)
@@ -231,6 +235,59 @@ def mpk_neumann_apply(polyHandle, x, y):
         load['spmv']  += (k+1)*(12*polyHandle.A1.nnz)-2*k*8*(polyHandle.A1.shape[1])+(2*k+1)*8*(polyHandle.A1.shape[0]+polyHandle.A1.shape[1])
         store['spmv'] += (2*k+1)*8*polyHandle.A1.shape[0]
         flop['spmv'] += (k+1)*2*polyHandle.A1.nnz-(2*k*2*polyHandle.A1.shape[1])
+
+
+def ilu0_setup(A):
+    if not have_MKL:
+        raise AssertionError('MKL is not available. Cannot use ILU preconditioner')
+    if type(A)==scipy.sparse.csr_matrix:
+        data = A.data
+        indptr = A.indptr
+        indices = A.indices
+        indptr_one_based = indptr + 1
+        indices_one_based = indices + 1
+        ipar=np.zeros(128,dtype='int32')
+        dpar=np.zeros(128,dtype='float64')
+        ierr = 0
+        val_ILU=np.zeros(A.nnz,dtype='float64')
+        intel_mkl.mkl_ilu0_setup(indptr_one_based, indices_one_based, data, val_ILU, ipar, dpar, ierr)
+        if(ierr != 0):
+            print("Error in ILU preconditioner setup")
+            
+        ilu = scipy.sparse.csr_matrix((val_ILU, indices, indptr), shape=A.shape)
+        return ilu
+
+#Setup for solving for Ax=b
+def trsv_setup(lower, A):
+    handle=None
+    if not have_MKL:
+        raise AssertionError('MKL is not available. Cannot use ILU preconditioner')
+    if type(A)==scipy.sparse.csr_matrix:
+        data = A.data
+        indptr = A.indptr
+        indices = A.indices
+        handle = intel_mkl.mkl_sparse_trsv_setup(lower, indptr, indices, data)
+    else:
+        raise TypeError('trsv_setup only implemented for scipy.sparse.csr_matrix')
+    return handle
+        
+#Solves for Ax=b
+def trsv(lower,handle,b,x):
+    if not have_MKL:
+        raise AssertionError('MKL is not available. Cannot use ILU preconditioner')
+    if handle==None:
+        raise AssertionError('TRSV setup not called or error occured during setup.')
+    else:
+        intel_mkl.mkl_sparse_trsv(lower, handle, b, x)
+        
+#Free TRSV
+def trsv_free(handle):
+    if not have_MKL:
+        raise AssertionError('MKL is not available. Cannot use ILU preconditioner')
+    if handle==None:
+        raise AssertionError('TRSV setup not called or error occured during setup.')
+    else:
+        intel_mkl.mkl_sparse_trsv_free(handle)
 
 
 def clone(v):
