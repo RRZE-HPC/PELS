@@ -379,19 +379,9 @@ def perf_report(type):
     After running a solver, print a performance summary of the
     kernels in this module (dot, axpby, spmv...). The argument 'type'
     should be either 'cpu' or 'gpu', dependning on which hardware you
-    ran. It is used to get some benchmark values from files cpujson or
-    gpu.json. You should either adjust these files to match your system,
-    or remove them to skip printing the roofline upper bounds.
+    ran. It can be used to get some benchmark values from files cpu.json or
+    gpu.json, but we currently ignore them.
     '''
-    bench = memory_benchmarks(type)
-    print('Hardware assumed for Roofline Model: %s'%(bench['label']))
-    have_bench = True
-    if bench['label'] == 'undefined':
-        have_bench = False
-        print('(roofline values will be skipped -- use cpu.json and/or gpu.json to provide memory bandwidth data)')
-    else:
-        print('(note that the hardware info is taken from [cpu|gpu].json, if does not match your system,\n'+
-              'you may want to update those files or delete them to skip the roofline prediction)')
     if type == 'cpu':
         nthreads = numba.get_num_threads()
         print('Number of threads: %d'%(nthreads))
@@ -403,7 +393,6 @@ def perf_report(type):
     # total number of functions called
     total_calls = 0
 
-    
     print('--------\t-----\t---------------\t---------------\t---------------')
     print('kernel  \tcalls\t bw_estimate   \t t_meas        \t t_meas/call   ')
     print('========\t=====\t===============\t===============\t===============')
