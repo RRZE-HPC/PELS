@@ -111,13 +111,15 @@ def cu_csr_spmv(valA,rptrA,colA, x, y):
     bx = cuda.blockIdx.x
     bdx = cuda.blockDim.x
     i = bx * bdx + tx
-    if i < x.size:
-        y[i] = 0.0
-        for j in range(rptrA[i], rptrA[i+1]):
-            y[i] += valA[j]*x[colA[j]]
+    if i >= x.size:
+        return
+    yi = beta*y[i]
+    for j in range(rptrA[i], rptrA[i+1]):
+        yi += valA[j]*x[colA[j]]
+    y[i] = yi
 
-@cuda.jit((float64[:], int32[:], int32[:], int32, float64[:], float64[:]))
-def cu_sell_spmv(valA, cptrA, colA, C, x, y):
+@cuda.jit((float64[:], int32[:], int32[:], int32, float64[:], float64[:], float64))
+def cu_sell_spmv(valA, cptrA, colA, C, x, y, beta):
     '''
     This kernel assumes that it is launched with the block size equal to the
     chunk-size C of the SELL-C-sigma matrix represented by [cptrA,valA,colA]
@@ -142,5 +144,5 @@ def cu_sell_spmv(valA, cptrA, colA, C, x, y):
     y_shared[tx] = 0
     for j in range(w):
         y_shared[tx] += valA[offs+j*c+tx] * x[colA[offs+j*c+tx]]
-    y[row] = y_shared[tx]
+    y[row] = beta*y[row] + y_shared[tx]
 

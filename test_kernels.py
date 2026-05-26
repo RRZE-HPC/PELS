@@ -143,8 +143,14 @@ class SparseMatKernelsTest(unittest.TestCase):
             assert(cuda.is_cuda_array(self.y))
 
     def test_csr_spmv(self):
+    init(self.y, 0.5) # should be ignored as beta=0 by default
         spmv(self.A, self.x, self.y)
         assert(diff_norm(self.y, self.Ax) < self.eps)
+
+    def test_csr_spmv_beta(self):
+        init(self.y, 0.5)
+        spmv(self.A, self.x, self.y, beta=-0.5)
+        assert(diff_norm(self.y, self.Ax-0.25) < self.eps)
 
 
     def test_csr_trsv(self):
