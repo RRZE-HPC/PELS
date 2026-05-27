@@ -214,10 +214,12 @@ def pcg_main():
             M = precon.Jacobi(A_csr)
         elif args.precon == 'SGS':
             M = precon.SymmetricGaussSeidel(A_csr)
-        elif args.precon == 'IC0':
-            M = precon.IChol0(A_csr)
-        elif args.precon=='ILU0':
-            M = precon.CuPyILU0(A_csr)
+        elif args.precon == 'IC':
+            M = precon.IChol(A_csr, args.ilu_fill, args.ilu_droptol, args.ilu_poly)
+        elif args.precon=='ILU':
+            if args.ilu_poly>0:
+                print('note: -ilu_poly is ignored for ILU (only supported with IC preconditioner)')
+            M = precon.CuPyILU(A_csr, args.ilu_fill, args.ilu_droptol)
         elif args.precon=='AMG':
             M = precon.PyAMG(A_csr)
         else:
