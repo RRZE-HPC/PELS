@@ -123,27 +123,24 @@ def same_array(x,y):
     else:
         return False
 
-def csr_spmv(valA,rptrA,colA, x, y, beta):
+def csr_spmv(valA,rptrA,colA, x, y):
         nrows = len(x)
-        cu_csr_spmv.forall(nrows)(valA,rptrA,colA,x,y,beta)
+        cu_csr_spmv.forall(nrows)(valA,rptrA,colA,x,y)
         cuda.synchronize()
 
-def sell_spmv(valA,cptrA,colA, C, x, y, beta):
+def sell_spmv(valA,cptrA,colA, C, x, y):
         nchunks = len(cptrA)-1
-        cu_sell_spmv[nchunks, C](valA, cptrA, colA, C, x, y, beta)
+        cu_sell_spmv[nchunks, C](valA, cptrA, colA, C, x, y)
         cuda.synchronize()
 
 
-def spmv(A, x, y, beta=0.0):
-    '''
-    Compute y = A*x + beta*y
-    '''
+def spmv(A, x, y):
     t0 = perf_counter()
 
     if type(A)==scipy.sparse.csr_matrix:
-        csr_spmv(A.cu_data, A.cu_indptr, A.cu_indices, x, y, beta)
+        csr_spmv(A.cu_data, A.cu_indptr, A.cu_indices, x, y)
     elif type(A)==sellcs.sellcs_matrix:
-        sell_spmv(A.cu_data, A.cu_indptr, A.cu_indices, A.C, x, y, beta)
+        sell_spmv(A.cu_data, A.cu_indptr, A.cu_indices, A.C, x, y)
     else:
         raise TypeError('spmv wrapper only implemented for scipy.sparse.csr_matrix or sellcs.sellcs_matrix')
     t1 = perf_counter()
