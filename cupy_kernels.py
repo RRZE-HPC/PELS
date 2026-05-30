@@ -15,13 +15,25 @@ import cupyx.scipy.sparse as csp
 from cupyx.scipy.sparse.linalg import spsolve_triangular
 from numba import cuda
 
-def as_cupy(A):
+def as_cupy(A, as_csc=False):
+    '''
+    If A is a vector or CSR matrix as used in the numba cuda_kernels,
+    return a correpsonding "CuPy view" of the GPU arrays.
 
-    if type(A) == scipy.sparse.csr_matrix:
+    If A is a CSR matrix and the flagas_csc=True is given, no data is moved, but the matrix
+    is returned in compressed column instead of compressed row storage.
+    That is, the returned object actually represents A.T, but if A is symmetric, that's the same thing.
+    '''
+    if type(A) == scipy.sparse.csc_matrix:
+        as_csc = True
+    if type(A) == scipy.sparse.csr_matrix or type(A) == scipy.sparse.csc_matrix:
         cp_data = cp.asarray(A.cu_data)
         cp_indptr = cp.asarray(A.cu_indptr)
         cp_indices = cp.asarray(A.cu_indices)
-        return csp.csr_matrix((cp_data, cp_indices, cp_indptr))
+        if as_csc==True:
+            return csp.csc_matrix((cp_data, cp_indices, cp_indptr))
+        else:
+            return csp.csr_matrix((cp_data, cp_indices, cp_indptr))
     elif cuda.is_cuda_array(A):
         return cp.asarray(A)
     else:

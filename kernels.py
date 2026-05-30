@@ -61,7 +61,15 @@ def compile_all():
     reset_counters()
 
 def to_device(A):
-    if type(A) == scipy.sparse.csr_matrix or type(A) == sellcs.sellcs_matrix:
+
+    # these seem to be essentially the same:
+    if type(A) == scipy.sparse.csr_array:
+        A = scipy.sparse.csr_matrix(A)
+    if type(A) == scipy.sparse.csc_array:
+        A = scipy.sparse.csc_matrix(A)
+    if (type(A) == scipy.sparse.csr_matrix or
+        type(A) == scipy.sparse.csc_matrix or
+        type(A) == sellcs.sellcs_matrix):
         A.cu_data = cuda.to_device(A.data)
         A.cu_indptr = cuda.to_device(A.indptr)
         A.cu_indices = cuda.to_device(A.indices)
@@ -163,12 +171,12 @@ def trsv(L, b, x, transpose=False):
 
     t0 = perf_counter()
 
-    if type(L)==scipy.sparse.csr_matrix:
+    if type(L)==scipy.sparse.csr_matrix or type(L)==scipy.sparse.csc_matrix:
         cp_trsv(L, b, x, transpose)
     elif type(L)==sellcs.sellcs_matrix:
-        raise Exception('trsv only implemented for csr matrices so far')
+        raise Exception('trsv only implemented for csr or csc matrices so far -- got sellcs_matrix')
     else:
-        raise TypeError('trsv wrapper only implemented for scipy.sparse.csr_matrix or sellcs.sellcs_matrix')
+        raise TypeError('trsv wrapper only implemented for scipy.sparse.csr_matrix or scipy.sparse.csc_matrix -- got '+str(type(L)))
     t1 = perf_counter()
     time['trsv']  += t1-t0
     calls['trsv'] += 1

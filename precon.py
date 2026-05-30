@@ -10,11 +10,12 @@
 
 import numpy as np
 import scipy
+from scipy.sparse.linalg import spilu
+from cupyx.scipy.sparse.linalg import spilu as cupy_spilu
 from kernels import *
 
 from numba import cuda
 
-from scipy.sparse.linalg import spilu
 
 # total number of calls
 calls = {'setup': 0, 'apply': 0}
@@ -152,19 +153,21 @@ class IChol:
 
         L = ilu.L
         d = np.sqrt(ilu.U.diagonal())
-        D = np.diag(d)
+        D = scipy.sparse.diags(d)
 
         # scale such that A \approx LL^T
-        L = (L@D).to_csr()
+        L = (L@D).tocsr()
 
         if poly_k<0:
             # copy to GPU for subsequent triangular solves
             self.L = to_device(L)
+            print('TROET '+str(type(L)))
+            print('TROET '+str(type(self.L)))
         else:
             d_inv = 1.0/d
             # scale U such that L = U^T: U <- 1/sqrt(d)*U.
             # We do this to avoid having to implement spmv with the transposed matrix L^T.
-            Lt = (np.diag(d_inv) @ ilu.U).tocsr() # now Lt = L^T
+            Lt = (scipy.sparse.diags(d_inv) @ ilu.U).tocsr() # now Lt = L^T
             self.d_inv = to_device(d_inv)
 
             # store the (negative) factor L and its explicit transpose, but skip the diagonal:
@@ -234,8 +237,10 @@ class CuPyILU:
         t0 = perf_counter()
         self.shape = A.shape
         self.dtype = A.dtype
-        self.A = to_device(scipy.sparse.tril(A).tocsr())
-        self.ilu = spilu(as_cupy(A), drop_tol=droptol, fill_factor=fill)
+        self.A = as_cupy(A, as_csc=True)
+        print(type(A))
+        print(type(self.A))
+        self.ilu = cupy_spilu(self.A) #, drop_tol=droptol, fill_factor=fill)
         t1 = perf_counter()
         calls['setup'] += 1
         time['setup'] += t1-t0
