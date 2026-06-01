@@ -88,7 +88,7 @@ def from_device(A):
         A.indptr = A.cu_indptr.copy_to_host()
         return A
     else:
-        return cuda.to_device(A)
+        return A.copy_to_host()
 
 def to_host(A):
     if cuda.is_cuda_array(A):
