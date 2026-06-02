@@ -17,9 +17,9 @@ from cupy.cuda import cusolver, cusparse
 from cupyx.scipy.sparse.linalg import spilu as cupy_spilu
 
 from kernels import *
+from cuda_precon import *
 
 from numba import cuda
-
 
 # total number of calls
 calls = {'setup': 0, 'apply': 0}
@@ -48,15 +48,15 @@ def neumann(A0, k, x, y):
     '''
     Apply degree-k Neumann polynomial in matrix A = (I-A0):
 
-    y \approx A^{-1} x = \sum_{j=0}^k A0^j x
+    y = A^{-1} x \approx \sum_{j=0}^k A0^j x
 
-    This function overwrites the input vector x with garbage and produces y
     '''
     v = copy(x) # = A0^0 x
     w = clone(y)
     for _ in range(k):
-        spmv(A0, x, w, scalar_y=-1.0)
-        axpby(1.0, v, -1.0, w)
+        w = A0^{i+1}x
+        spmv(A0, v, w)
+        axpby(1.0, w, 1.0, v)
 
 class Jacobi:
     '''
@@ -165,8 +165,8 @@ class IChol:
         if poly_k<0:
             # copy to GPU for subsequent triangular solves
             self.L = to_device(L)
-            print('TROET '+str(type(L)))
-            print('TROET '+str(type(self.L)))
+            #print('TROET '+str(type(L)))
+            #print('TROET '+str(type(self.L)))
         else:
             d_inv = 1.0/d
             # scale U such that L = U^T: U <- 1/sqrt(d)*U.
@@ -179,6 +179,7 @@ class IChol:
             # for implementing the Neumann polynomial approximation if the inverse (see 'apply')
             self.L0  = to_device(scipy.sparse.tril(-L,k=-1, format='csr'))
             self.L0t = to_device(scipy.sparse.triu(-Lt,k=+1, format='csr'))
+            self.w_tmp = copy(self.v_tmp)
 
         t1 = perf_counter()
         calls['setup'] += 1
@@ -205,13 +206,13 @@ class IChol:
             # Solve Av = (LL^T)v = w as
 
             # 1. v_tmp = L^{-1}w \approx \sum_{j=0}^k (I-L0)^j (D^{-1}v)
-            vscale(self.d_inv, w, w_tmp)
-            neumann(self.L0, self.w_tmp. self.v_tmp)
+            vscale(self.d_inv, w, self.w_tmp)
+            neumann(self.L0, self.poly_k, self.w_tmp, self.v_tmp)
 
             # 2. v = L^{-T}v_tmp \approx \sum_{j=0}^k (I-L0)^j D^{-1}v_tmp
             # This again overwrites v_tmp and produces w_tmp
-            neumann(self.L0t, self.v_tmp. self.w_tmp)
-            vscale(self.d_inv, w_tmp, v)
+            neumann(self.L0t, self.poly_k, self.v_tmp, self.w_tmp)
+            vscale(self.d_inv, self.w_tmp, v)
         t1 = perf_counter()
         calls['apply'] += 1
         time['apply'] += t1-t0
@@ -360,16 +361,17 @@ class CuSolverIChol0:
 
     def apply(self, b,  x):
         # --- Forward and Backward Solves (M * x = b) ---
-        # Allocate intermediate vector
-        z = cp.zeros(self.shape[0], dtype=self.dtype)
 
         m = self.shape[0]
         nnz = self.nnz
         alpha = np.array(1.0, dtype=self.dtype)
 
+        # Allocate intermediate vector
+        z = cp.zeros(m, dtype=self.dtype)
+
         x_ptr = x.__cuda_array_interface__['data'][0]
-        z_ptr = z.__cuda_array_interface__['data'][0]
         b_ptr = b.__cuda_array_interface__['data'][0]
+        z_ptr = z.data.ptr
 
         # Forward solve: L * z = b
         # Tell cuSPARSE to treat the factored matrix as a Lower Triangular matrix with a non-unit diagonal
@@ -386,6 +388,15 @@ class CuSolverIChol0:
             self.cusparse_handle, self.trans_Lt, m, nnz, alpha.ctypes.data, self.mat_descr,
             self.d_val_ptr, self.d_indptr_ptr, self.d_indices_ptr, self.csrsv2_info_Lt,
             z_ptr, x_ptr, self.policy, self.pBuffer.data.ptr)
+        troet_b = from_device(b)
+        troet_x = from_device(x)
+        troet_z = z.get() # note that this is a cupy object, not numba.cuda
+        print('TROET b')
+        print(troet_b)
+        print('TROET z')
+        print(troet_z)
+        print('TROET x')
+        print(troet_x)
 
 
     def __del__(self):
