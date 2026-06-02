@@ -35,14 +35,12 @@ def get_argparser():
                     help='Preconditioner to be used [None,Jacobi,SGS,IC0,ILU0]\n'+
                          'Jacobi is simple diagonal scaling,\n'+
                          'SGS is Symmetric Gauss-Seidel (which involves triangular solves)\n'+
-                         'IC is a zero-fill incomplete Cholesky factorization (computed on the CPU).\n'+
-                         '    It can be combined with the -poly_k flag to avoid triangular solves in favor of spmvs.'+
-                         'ILU is an incomplete factorization in CuPy (based on SuperLU)')
-    parser.add_argument('-ilu_fill', type=int, default=1,
+                         'IC is an incomplete Cholesky factorization (computed on the CPU).\n'+
+    parser.add_argument('-ic_fill', type=int, default=1,
                     help='With -precon=IC or ILU, set the level-of-fill.')
-    parser.add_argument('-ilu_droptol', type=float, default=0.0,
+    parser.add_argument('-ic_droptol', type=float, default=0.0,
                     help='With -precon=IC or ILU, set the relative drop tolerance.')
-    parser.add_argument('-ilu_poly', type=int, default=-1,
+    parser.add_argument('-ic_poly', type=int, default=-1,
                    help='combine -ilu_poly=<k> with -precon=IC to replace the forward/backward triangular solves\n'+
                    'by a degree-k Neumann polynomial (k spmvs with L and L^T per CG iteration)')
 

@@ -18,7 +18,6 @@ try:
     import pyamg
 except ImportError:
     pyamg = None
-    warning("pyamg was not found, create_matrix will only be able to generate 'Laplace<nx>x<ny>'.")
 
 def parse_matstring(input):
     '''

@@ -215,13 +215,7 @@ def pcg_main():
         elif args.precon == 'SGS':
             M = precon.SymmetricGaussSeidel(A_csr)
         elif args.precon == 'IC':
-            M = precon.IChol(A_csr, args.ilu_fill, args.ilu_droptol, args.ilu_poly)
-        elif args.precon=='ILU':
-            if args.ilu_poly>0:
-                print('note: -ilu_poly is ignored for ILU (only supported with IC preconditioner)')
-            M = precon.CuPyILU(A_csr, args.ilu_fill, args.ilu_droptol)
-        elif args.precon=='AMG':
-            M = precon.PyAMG(A_csr)
+            M = precon.IChol(A_csr, args.ic_fill, args.ic_droptol, args.ic_poly)
         else:
             raise Exception("Unsupported parameter: -precon='"+args.precon+"'")
         if args.fmt == 'SELL' and A.sigma!=1:
