@@ -44,19 +44,24 @@ def vscale_inplace(v, x):
     cu_vscale_inplace.forall(v.size)(v,x)
     cuda.synchronize()
 
-def neumann(A0, k, x, y):
-    '''
+def neumann(A0, k, v0, x):
+    r'''
     Apply degree-k Neumann polynomial in matrix A = (I-A0):
 
-    y = A^{-1} x \approx \sum_{j=0}^k A0^j x
+    x = A^{-1} v0 = (I-A0)^{-1} v0 \approx \sum_{j=0}^k (A0^j v0)
 
     '''
-    v = copy(x) # = A0^0 x
-    w = clone(y)
+    v = clone(v0)
+    A0v = clone(v0)
+    # set x = v0 (= A0^0 v0)
+    axpby(1.0,v0, 0.0,x)
     for _ in range(k):
-        w = A0^{i+1}x
-        spmv(A0, v, w)
-        axpby(1.0, w, 1.0, v)
+        # A0v = A0^{j+1}v0
+        spmv(A0, v, A0v)
+        # x += v0 to yield x_k
+        axpby(1.0, A0v, 1.0, x)
+        # swap the vectors
+        A0v, v = v, A0v
 
 class Jacobi:
     '''
@@ -107,23 +112,40 @@ class SymmetricGaussSeidel:
 
 class IChol:
     '''
-    Zero-fill incomplete Cholesky factorization preconditioner.
+    Incomplete Cholesky factorization preconditioner.
+
     Given a symmetric and positive definite (spd) matrix A,
-    computes A \approx LL^T, where L inherits the sparsity pattern
-    of the lower triangular part of A. The preconditioner is applied
-    as a sequence of a forward triangular solve with L and a backward triangular
-    solve with L^T.
+    computes A \approx LL^T, where L is lower triangular. By default, L
+    inherits the sparsity pattern of the lower triangular part of A (zero-fill, or ILU0).
+
+    The preconditioner is applied as a sequence of a forward triangular solve with L and
+    a backward triangular solve with L^T.
+
+    **Improving the preconditioner**
+
+    Two parameters affect the approximation quality and fill-in allowed in L:
+
+    - droptol: remove newly generated elements in during elimination if they are
+      smaller than droptol (in absolute value, relative to the diagonal)
+      (default 0, no drop-by-value)
+    - fill: restrict newly created entries ("fill-in") to positions the sparsity pattern of A^{fill}
+      (default 1, 'zero-fill ILU')
+
+    **Avoiding triangular solves**
+
+    If poly_k>=0 is given, triangular solves are replaced by a degree <poly_k> Neumann polynomial,
+    resulting in 2x <poly_k> spmvs with triangular matrices instead of two triangular solves.
+    This reduces the approximation quality of the preconditioner, but eliminates data dependencies and thus imporoves
+    performance on the GPU.
 
     Implementation note: The factorization is done on the host (CPU) using scipy, and in fact
     uses an ILU algorithm without pivoting, so the 'setup' phase is highly non-optimal.
     The triangular solves rely on the CuPy implementation (via trsv in kernels.py).
-    If poly_k>=0 is given, triangular solves are replaced by a degree <poly_k> Neumann polynomial,
-    resulting in 2x <poly_k> spmvs with triangular matrices instead of two triangular solves.
 
     Example:
 
-    A  = matrix_generator.create_matrix('Laplace128x128')
-    IC = IChol(A)
+    A  = matrix_generator.create_matrix('Laplace500x500')
+    IC = IChol(A, fill=3, droptol=0.01) # uses forward/backward solves
     y  = kernels.to_device(numpy.random.random(A.shape[0]))
     x  = kernels.to_device(numpy.zeros(A.shape[0]))
     IC.apply(y, x)
@@ -153,33 +175,28 @@ class IChol:
         # Compute factorization using SciPy's ILU0. Because A is spd,
         # we (i) do not need pivoting, and (b) can scale the result such that
         # L=U^T
-        ilu = spilu(A, drop_tol=droptol, fill_factor=fill, permc_spec='NATURAL', diag_pivot_thresh=0.0)
+        ilu = spilu(A.T, drop_tol=droptol, fill_factor=fill, permc_spec='NATURAL', diag_pivot_thresh=0.0)
 
         L = ilu.L
-        d = np.sqrt(ilu.U.diagonal())
-        D = scipy.sparse.diags(d)
-
-        # scale such that A \approx LL^T
-        L = (L@D).tocsr()
+        d = ilu.U.diagonal()
 
         if poly_k<0:
-            # copy to GPU for subsequent triangular solves
+            # scale such that A \approx LL^T
+            D = scipy.sparse.diags(np.sqrt(d))
+            L = (L@D).tocsr()
             self.L = to_device(L)
-            #print('TROET '+str(type(L)))
-            #print('TROET '+str(type(self.L)))
         else:
             d_inv = 1.0/d
-            # scale U such that L = U^T: U <- 1/sqrt(d)*U.
-            # We do this to avoid having to implement spmv with the transposed matrix L^T.
-            Lt = (scipy.sparse.diags(d_inv) @ ilu.U).tocsr() # now Lt = L^T
             self.d_inv = to_device(d_inv)
 
             # store the (negative) factor L and its explicit transpose, but skip the diagonal:
             # L = (I - L0), L^T = (I - L0t)
             # for implementing the Neumann polynomial approximation if the inverse (see 'apply')
-            self.L0  = to_device(scipy.sparse.tril(-L,k=-1, format='csr'))
-            self.L0t = to_device(scipy.sparse.triu(-Lt,k=+1, format='csr'))
-            self.w_tmp = copy(self.v_tmp)
+            L0  = scipy.sparse.tril(-L,k=-1, format='csr')
+            L0t = L0.T.tocsr()
+            self.L0 = to_device(L0)
+            self.L0t = to_device(L0t)
+            self.w_tmp = clone(self.v_tmp)
 
         t1 = perf_counter()
         calls['setup'] += 1
@@ -202,17 +219,18 @@ class IChol:
         else:
             # Use the degree-k Neumann polynomial to approximate the two triangular solves.
             #
-            # With L = D(I-L0), L^T = (I-L0t)D
-            # Solve Av = (LL^T)v = w as
+            # With L = (I-L0), L^T = (I-L0t), A \approx LDL^T
+            # Solve Av = (LDL^T)v = w as
 
-            # 1. v_tmp = L^{-1}w \approx \sum_{j=0}^k (I-L0)^j (D^{-1}v)
-            vscale(self.d_inv, w, self.w_tmp)
-            neumann(self.L0, self.poly_k, self.w_tmp, self.v_tmp)
+            # 1. v_tmp = L^{-1}w = (I-L0)^{-1}w \approx \sum_j L0^j w
+            neumann(self.L0, self.poly_k, w, self.v_tmp)
 
-            # 2. v = L^{-T}v_tmp \approx \sum_{j=0}^k (I-L0)^j D^{-1}v_tmp
-            # This again overwrites v_tmp and produces w_tmp
-            neumann(self.L0t, self.poly_k, self.v_tmp, self.w_tmp)
-            vscale(self.d_inv, self.w_tmp, v)
+            # 2. W_tmp = D^{-1}v_tmp
+            vscale(self.d_inv, self.v_tmp, self.w_tmp)
+
+            # 3. v = L^{-T}w_tmp \approx \sum_{j=0}^k L0t^j w_tmp
+            neumann(self.L0t, self.poly_k, self.w_tmp, v)
+
         t1 = perf_counter()
         calls['apply'] += 1
         time['apply'] += t1-t0
