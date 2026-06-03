@@ -35,7 +35,7 @@ def get_argparser():
                     help='Preconditioner to be used [None,Jacobi,SGS,IC0,ILU0]\n'+
                          'Jacobi is simple diagonal scaling,\n'+
                          'SGS is Symmetric Gauss-Seidel (which involves triangular solves)\n'+
-                         'IC is an incomplete Cholesky factorization (computed on the CPU).\n'+
+                         'IC is an incomplete Cholesky factorization (computed on the CPU).\n')
     parser.add_argument('-ic_fill', type=int, default=1,
                     help='With -precon=IC or ILU, set the level-of-fill.')
     parser.add_argument('-ic_droptol', type=float, default=0.0,
@@ -44,4 +44,30 @@ def get_argparser():
                    help='combine -ilu_poly=<k> with -precon=IC to replace the forward/backward triangular solves\n'+
                    'by a degree-k Neumann polynomial (k spmvs with L and L^T per CG iteration)')
 
+    # add driver-specific command-line arguments for polynomial preconditioning with or without RACE:
+    parser.add_argument('-printerr', action=BooleanOptionalAction,
+                    help='Besides the residual norm, also compute and print the error norm.')
+    parser.add_argument('-rhsfile', type=str, default='None',
+                    help='MatrixMarket filename for right-hand side vector b')
+    parser.add_argument('-solfile', type=str, default='None',
+                    help='MatrixMarket filename for exact solution x')
+
     return parser
+
+# Given an ArgumentParser P, parses the command-line and afterwards
+# overwrites those entries found in the dictionary A. Returns a complete
+
+def get_arg_dict(P, A={}):
+
+    args = P.parse_args()
+    args_dict = vars(args)
+
+    A_default = vars(P)
+    invalid_keys = set(B) - set(A)
+
+    if invalid_keys:
+        raise ValueError(f"Unexpected arguments encountered: {invalid_keys}")
+
+    # If valid, merge them (Python 3.9+)
+    A = A | A_default
+    return A

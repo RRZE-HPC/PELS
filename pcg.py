@@ -122,7 +122,20 @@ import precon
 from matrix_generator import create_matrix
 from pels_args import *
 
-def pcg_main(args):
+def pcg_demo(args_dict={}):
+    '''
+    This is a driver routine that can be called from a Jupyter notebook,
+    with argujments in a Python dict. For example:
+
+    d = {'matgen': 'Laplace100x100', 'fmt': 'SELL', 'C': 128, 'maxit': 500, 'tol': 1.0e-3}
+    pcg_demo(d)
+
+    Additional arguments are read from the command-line, and defaults are set for any unspecified parameters.
+    The '--help' option can be used to get information about all possible parameters.
+    '''
+    parser = get_argparser()
+
+    args_dict = get_arg_dict(parser, args_dict)
 
     if args['seed'] is not None:
         np.random.seed(args['seed'])
@@ -247,21 +260,6 @@ def pcg_main(args):
     print('Total time for CG: %g seconds.'%(t_CG))
 
 if __name__ == '__main__':
-
-    ## **Note:** The Python garbage collector (gc)
-    ## can kill the performance of the C kernels
-    ## for some obscure reason (possibly a conflict
-    parser = get_argparser()
-
-    # add driver-specific command-line arguments for polynomial preconditioning with or without RACE:
-    parser.add_argument('-printerr', action=BooleanOptionalAction,
-                    help='Besides the residual norm, also compute and print the error norm.')
-    parser.add_argument('-rhsfile', type=str, default='None',
-                    help='MatrixMarket filename for right-hand side vector b')
-    parser.add_argument('-solfile', type=str, default='None',
-                    help='MatrixMarket filename for exact solution x')
-
-    args = parser.parse_args()
-    args_dict = vars(args)
-    pcg_main(args_dict)
+    # by default, the driver gets all arguments from the command-line
+    pcg_demo()
 
