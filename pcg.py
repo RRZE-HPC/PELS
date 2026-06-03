@@ -134,31 +134,30 @@ def pcg_demo(args_dict={}):
     The '--help' option can be used to get information about all possible parameters.
     '''
     parser = get_argparser()
+    args = parser.parse_args()
 
-    args_dict = get_arg_dict(parser, args_dict)
+    if args.seed is not None:
+        np.random.seed(args.seed)
 
-    if args['seed'] is not None:
-        np.random.seed(args['seed'])
-
-    if args['matfile'] != 'None':
-        if args['matgen']!='None':
+    if args.matfile != 'None':
+        if args.matgen!='None':
             print('got both -matfile and -matgen, the latter will be ignored.')
-        if not args['matfile'].endswith(('.mm','.mtx','.mm.gz','.mtx.gz')):
+        if not args.matfile.endswith(('.mm','.mtx','.mm.gz','.mtx.gz')):
             raise(ValueError('Expecting MatrixMarket file with extension .mm[.gz] or .mtx[.gz]'))
-        A = csr_matrix(mmread(args['matfile']))
-    elif args['matgen'] != 'None':
-        A = create_matrix(args['matgen'])
+        A = csr_matrix(mmread(args.matfile))
+    elif args.matgen != 'None':
+        A = create_matrix(args.matgen)
     else:
         raise 'You must specify either -matgen or -matfile. Use --help for more information.'
     N = A.shape[0]
 
-    if args['solfile']!='None':
-        x_ex=mmread(args['solfile']).reshape(N)
+    if args.solfile!='None':
+        x_ex=mmread(args.solfile).reshape(N)
     else:
         x_ex=np.random.rand(N)
 
-    if args['rhsfile']!='None':
-        b=mmread(args['rhsfile']).reshape(N)
+    if args.rhsfile!='None':
+        b=mmread(args.rhsfile).reshape(N)
     else:
         b=A*x_ex
 
@@ -167,17 +166,17 @@ def pcg_demo(args_dict={}):
     print('norm of rhs: %e'%(norm(b)))
     print('rel. residual of given solution: %e'%(norm(A*x_ex-b)/norm(b)))
 
-    tol = args['tol']
-    maxit = args['maxit']
+    tol = args.tol
+    maxit = args.maxit
 
     sigma=1
 
     A_csr = A # we may need it for creating the preconditioner
               # in case the user wants a SELL-C-sigma matrix.
 
-    if args['fmt']=='SELL':
-        C = args['C']
-        sigma = args['sigma']
+    if args.fmt=='SELL':
+        C=args.C
+        sigma=args.sigma
         A = sellcs_matrix(A_csr=A_csr, C=C, sigma=sigma)
         b = b[A.permute]
         print('Matrix format: SELL-%d-%d'%(C,sigma))
@@ -205,21 +204,21 @@ def pcg_demo(args_dict={}):
     M=None
     t0 = perf_counter()
 
-    if args['precon'] is not None:
+    if args.precon is not None:
         # setup preconditioner...
-        if args['precon'] == 'Jacobi' or args['precon'] == 'jacobi':
+        if   args.precon == 'Jacobi' or args.precon == 'jacobi':
             M = precon.Jacobi(A_csr)
-        elif args['precon'] == 'SGS':
+        elif args.precon == 'SGS':
             M = precon.SymmetricGaussSeidel(A_csr)
-        elif args['precon'] == 'IC':
+        elif args.precon == 'IC':
             M = precon.IChol(A_csr, args.ic_fill, args.ic_droptol, args.ic_poly)
         else:
-            raise Exception("Unsupported parameter: -precon='"+args['precon+"'")
-        if args['fmt'] == 'SELL' and A.sigma !=1:
+            raise Exception("Unsupported parameter: -precon='"+args.precon+"'")
+        if args.fmt == 'SELL' and A.sigma!=1:
             raise Exception("Preconditioning not implemented for SELL-C-simga format with sigma>1")
 
     x_ex_in = None
-    if args['printerr']:
+    if args.printerr:
         x_ex_in = x_ex
 
     t0_soln = perf_counter()
@@ -239,7 +238,7 @@ def pcg_demo(args_dict={}):
     res = b - A_csr@x
     print('relative residual of computed solution: %e'%(norm(res)/norm(b)))
 
-    if args['fmt'] == 'SELL' and sigma>1:
+    if args.fmt=='SELL' and sigma>1:
         x = x[A.unpermute]
 
     print('relative error of computed solution: %e'%(norm(x-x_ex)/norm(x_ex)))
@@ -262,4 +261,3 @@ def pcg_demo(args_dict={}):
 if __name__ == '__main__':
     # by default, the driver gets all arguments from the command-line
     pcg_demo()
-
