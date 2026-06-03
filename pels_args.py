@@ -34,11 +34,11 @@ def get_pcg_argparser():
     parser = ArgumentParser(description='Run a CG benchmark.',
                             formatter_class=RawTextHelpFormatter)
 
-    parser.add_argument('-matfile', type=str, default='None',
-                    help='MatrixMarket filename for matrix A')
-    parser.add_argument('-matgen', type=str, default='None',
-                    help='Matrix generator string  for matrix A. E.g., "Laplace128x64", '+
-                         '"Laplace50x50x50", or "LinElast100x50" (latter requires pyamg)')
+    parser.add_argument('-matrix', type=str, default=None,
+                    help='Matrix to be generated or read from a MatrixMarket file.\n'+
+                         'E.g., "Laplace128x64", '+
+                         '"Laplace50x50x50", or "LinElast100x50" (latter requires pyamg).\n'
+                         'Strings ending on ".mm", ".mtx", ".mm.gz" or ".mtx.gz" are interepted as MatrixMarket file names.')
     parser.add_argument('-maxit', type=int, default=1000,
                     help='Maximum number of CG iterations allowed.')
     parser.add_argument('-tol', type=float, default=1e-6,

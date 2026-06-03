@@ -11,7 +11,8 @@
 import sys
 import numpy as np
 import scipy
-from scipy.sparse import *
+from scipy.sparse import csr_matrix
+from scipy.io import mmread
 import re
 
 try:
@@ -30,7 +31,7 @@ def parse_matstring(input):
     input_list3d = re.match(r"(?P<label>[-+]?\D+)(?P<nx>[-+]?\d+)x(?P<ny>[-+]?\d+)x(?P<nz>[-+]?\d+)", input)
     if input_list == None and input_list3d == None:
         raise(ValueError('Could not parse matrix genration string, should have the format "<label><nx>x<ny>x<nz>", where <label> is a string, nx, ny and nz (in case of 3d) are integers.'))
-    
+
     if input_list3d != None:
         label = input_list3d['label']
         nx = int(input_list3d['nx'])
@@ -49,27 +50,29 @@ def parse_matstring(input):
 
 def create_matrix(matstring, imbal=False):
 
-    label, nx, ny, nz = parse_matstring(matstring)
-    if label == 'Laplace' and nz == 1:
-        A=create_laplacian(nx,ny)
-    elif label == 'Laplace':
-        A=create_laplacian3d(nx,ny,nz)
-    elif pyamg is not None:
-        if label == 'LinElast':
-            if nz>1:
-                raise('LinElast<nx>x<ny> only available in 2D')
-            # linear elasticity stiffness matrix A (on a regular, quadrilateral mesh)
-            # B are the rigid-body modes (the nullspace of A), we ignore them but they
-            # could be used for preconditioning.
-            A, B = pyamg.gallery.linear_elasticity((nx, ny), format='csr')
-            A = csr_matrix(A)
-            # Could also use a triangular mesh:
-            #E2V,Vert = regular_triangle_mesh(nx, ny)
-            #A, B = pyamg.gallery.linear_elasticity_p1(Vert, E2V, format='csr')
-        else:
-            raise(ValueError('matgen string "'+label+'" not supported, only "Laplace" or "LinElast" are, right now.'))
+    if matstring.endswith(('.mm','.mtx','.mm.gz','.mtx.gz')):
+        A = csr_matrix(mmread(matstring))
     else:
-        raise(ValueError('create_matrix can only build "Laplace<nx>x<ny>", "Laplace<nx>x<ny>x<nz>",  matrices up to now.'))
+        label, nx, ny, nz = parse_matstring(matstring)
+        if label == 'Laplace' and nz == 1:
+            A = create_laplacian(nx,ny)
+        elif label == 'Laplace':
+            A=create_laplacian3d(nx,ny,nz)
+        elif pyamg is not None:
+            if label == 'LinElast':
+                if nz>1:
+                    raise('LinElast<nx>x<ny> only available in 2D')
+                # linear elasticity stiffness matrix A (on a regular, quadrilateral mesh)
+                # B are the rigid-body modes (the nullspace of A), we ignore them but they
+                # could be used for preconditioning.
+                A, B = pyamg.gallery.linear_elasticity((nx, ny), format='csr')
+                A = csr_matrix(A)
+                # Could also use a triangular mesh:
+                #E2V,Vert = regular_triangle_mesh(nx, ny)
+                #A, B = pyamg.gallery.linear_elasticity_p1(Vert, E2V, format='csr')
+            else:
+                raise(ValueError('matrix string "'+label+'" not supported, only "Laplace" or "LinElast" are, right now,\n'
+                                 'or read matrix market (*.mm[.gz] or *.mtx[.gz])'))
 
     if(imbal==False):
         return A

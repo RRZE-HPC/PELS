@@ -113,8 +113,6 @@ def cg_solve(A, M, b, x0, tol, maxit, verbose=True, x_ex=None):
 
 import numba
 from numpy.linalg import norm
-from scipy.sparse import *
-from scipy.io import mmread
 from sellcs import sellcs_matrix
 
 import precon
@@ -127,7 +125,7 @@ def pcg_demo(args_dict={}):
     This is a driver routine that can be called from a Jupyter notebook,
     with argujments in a Python dict. For example:
 
-    d = {'matgen': 'Laplace100x100', 'fmt': 'SELL', 'C': 128, 'maxit': 500, 'tol': 1.0e-3}
+    d = {'matrix': 'Laplace100x100', 'fmt': 'SELL', 'C': 128, 'maxit': 500, 'tol': 1.0e-3}
     pcg_demo(d)
 
     Additional arguments are read from the command-line, and defaults are set for any unspecified parameters.
@@ -138,16 +136,10 @@ def pcg_demo(args_dict={}):
     if args.seed is not None:
         np.random.seed(args.seed)
 
-    if args.matfile != 'None':
-        if args.matgen!='None':
-            print('got both -matfile and -matgen, the latter will be ignored.')
-        if not args.matfile.endswith(('.mm','.mtx','.mm.gz','.mtx.gz')):
-            raise(ValueError('Expecting MatrixMarket file with extension .mm[.gz] or .mtx[.gz]'))
-        A = csr_matrix(mmread(args.matfile))
-    elif args.matgen != 'None':
-        A = create_matrix(args.matgen)
+    if args.matrix is not None:
+        A = create_matrix(args.matrix)
     else:
-        raise 'You must specify either -matgen or -matfile. Use --help for more information.'
+        raise Exception('You must specify the -matrix option. Use --help for more information.')
     N = A.shape[0]
 
     if args.solfile!='None':
