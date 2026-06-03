@@ -20,6 +20,6 @@ python3 pcg.py --help
 - Before commiting changes to the Jupyter notebook ``PELS.ipynb``, set up your local repo to
   filter out changes in execution counts etc.:
   ```bash
-  pip install nbstripout
-  nbstripout --install
+  pip install pre-commit
+  pre-commit install
   ```
