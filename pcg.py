@@ -133,8 +133,7 @@ def pcg_demo(args_dict={}):
     Additional arguments are read from the command-line, and defaults are set for any unspecified parameters.
     The '--help' option can be used to get information about all possible parameters.
     '''
-    parser = get_argparser()
-    args = parser.parse_args()
+    args = get_pcg_args(args_dict)
 
     if args.seed is not None:
         np.random.seed(args.seed)

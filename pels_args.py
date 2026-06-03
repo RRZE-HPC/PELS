@@ -1,8 +1,28 @@
 from argparse import *
 
-def get_argparser():
+def get_pcg_args(args_dict):
     '''
-    pels_argparser() returns an argparse.ArgumentParser object that
+    Get an args struct combining input from
+    - the command-line, e.g. "-precon IC"
+    - a dictionary, e.g. {'ic_droptol': 0.01, 'ic_fill': 3}
+
+    This would return a struct with
+
+    args.precon     = 'IC'
+    args.ic_droptol = 0.01
+    args.ic_fill    = 3
+    ...
+    where all other possible arguments are present with default values.
+    '''
+    parser = get_pcg_argparser()
+    args_ini = Namespace(**args_dict)
+    args = parser.parse_args(namespace=args_ini)
+    return args
+
+
+def get_pcg_argparser():
+    '''
+    Returns an ArgumentParser object that
     offers some useful settings for, e.g.,:
 
     - selecting the sparse matrix format (CSR or SELL-C-sigma)
@@ -54,20 +74,3 @@ def get_argparser():
 
     return parser
 
-# Given an ArgumentParser P, parses the command-line and afterwards
-# overwrites those entries found in the dictionary A. Returns a complete
-
-def get_arg_dict(P, A={}):
-
-    args = P.parse_args()
-    args_dict = vars(args)
-
-    A_default = vars(P)
-    invalid_keys = set(B) - set(A)
-
-    if invalid_keys:
-        raise ValueError(f"Unexpected arguments encountered: {invalid_keys}")
-
-    # If valid, merge them (Python 3.9+)
-    A = A | A_default
-    return A
