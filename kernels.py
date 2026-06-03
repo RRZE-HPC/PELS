@@ -302,3 +302,48 @@ def perf_report():
     print('--------\t-----\t---------------\t---------------')
     print('%8s\t     \t               \t               \t %8.4g s '%('Total',t_tot))
     print('--------\t-----\t---------------\t---------------')
+
+
+from matrix_generator import create_matrix
+from timeit import timeit
+
+def spmv_bench(matrix, mat_fmt='CRS', arrow=False):
+
+    # make runs reproducible
+    rand_seed=314159265
+    np.random.seed(rand_seed)
+
+    A = create_matrix(matrix, imbal=arrow)
+    N = A.shape[0]
+    print(f'nnz = {A.nnz}, nrows = {N}, nnzr = {float(A.nnz)/float(N):4.2g}')
+    if 'SELL' in mat_fmt:
+        C_=int(mat_fmt.split('-')[1])
+        if C_ > 256:
+            print('C greater than 256. Setting to maximum possible value 256')
+            C_ = 256
+        sigma_=int(mat_fmt.split('-')[2])
+        print(f'Matrix format: SELL-{C_}-{sigma_}')
+        A = sellcs.sellcs_matrix(A_csr=A, C=C_, sigma=sigma_)
+    else:
+        print('Matrix format: CSR')
+
+    # transfer matrix and vectors to the GPU
+    A = to_device(A)
+    x = to_device(np.random.rand(N))
+    y = to_device(np.random.rand(N))
+
+    #run the kernel once to avoid timing just-in-time compilation
+    spmv(A,x,y)
+    #warm-up, determine iterations for 1 sec
+    iter = 10
+    elapsed_seconds = timeit(lambda: spmv(A,x,y), number=iter)
+    iter = max(1, int(iter // elapsed_seconds))
+
+    reset_counters()
+
+    # run actual benchmark
+    elapsed_seconds = timeit(lambda: spmv(A,x,y), number=iter)
+
+    #perf_report()
+    print(f'Performance [GFlop/s] = {2*iter*A.nnz*1e-9/elapsed_seconds}')
+    perf_report()

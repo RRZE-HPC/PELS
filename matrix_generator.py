@@ -11,7 +11,7 @@
 import sys
 import numpy as np
 import scipy
-from scipy.sparse import csr_matrix
+from scipy.sparse import *
 from scipy.io import mmread
 import re
 
