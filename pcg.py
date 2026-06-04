@@ -137,7 +137,10 @@ def pcg_demo(args_dict={}):
         np.random.seed(args.seed)
 
     if args.matrix is not None:
-        A = create_matrix(args.matrix)
+        if type(args.matrix) == scipy.sparse.csr_matrix:
+            A = args.matrix
+        else:
+            A = create_matrix(args.matrix)
     else:
         raise Exception('You must specify the -matrix option. Use --help for more information.')
     N = A.shape[0]
