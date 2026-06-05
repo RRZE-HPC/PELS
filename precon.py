@@ -63,6 +63,77 @@ def neumann(A0, k, v0, x):
         # swap the vectors
         A0v, v = v, A0v
 
+class FastTrsv:
+
+    def __init__(self, L):
+        '''
+        Run analysis to optimize triangular solves (pass the output to cp_trsv)
+        '''
+        self.size = L.shape[0]
+        self.L_cp = as_cupy(L)
+        self.L_cp.sort_indices()
+
+        # Get the current cuSPARSE handle and stream
+        self.device = cupy.cuda.Device()
+        self.handle = self.device.cusparse_handle
+        self.stream = cp.cuda.get_current_stream()
+
+        # Create the Matrix Descriptor and set its properties
+        self.descr = cusparse.createMatDescr()
+        cusparse.setMatType(self.descr, cusparse.CUSPARSE_MATRIX_TYPE_GENERAL)
+        cusparse.setMatIndexBase(self.descr, cusparse.CUSPARSE_INDEX_BASE_ZERO)
+        cusparse.setMatFillMode(self.descr, cusparse.CUSPARSE_FILL_MODE_LOWER)
+        cusparse.setMatDiagType(self.descr, cusparse.CUSPARSE_DIAG_TYPE_NON_UNIT)
+
+        self.info = cusparse.createCsrsv2Info()
+
+        # Get required buffer size for analysis and solve stages
+        buffer_size = cusparse.dcsrsv2_bufferSize(
+            self.handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
+            self.size, self.L_cp.nnz, self.descr, self.L_cp.data.data.ptr,
+            self.L_cp.indptr.data.ptr, self.L_cp.indices.data.ptr, self.info)
+        buffer_size_T = cusparse.dcsrsv2_bufferSize(
+            self.handle, cusparse.CUSPARSE_OPERATION_TRANSPOSE,
+            self.size, self.L_cp.nnz, self.descr, self.L_cp.data.data.ptr,
+            self.L_cp.indptr.data.ptr, self.L_cp.indices.data.ptr, self.info)
+        print(f'TROET buffer_sizes = {buffer_size}, {buffer_size_T}')
+        self.buffer_size = np.max([buffer_size, buffer_size_T])
+        self.buffer = cp.empty(self.buffer_size, dtype=cp.int8)
+        cusparse.dcsrsv2_analysis(
+            self.handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
+            self.size, self.L_cp.nnz, self.descr, self.L_cp.data.data.ptr,
+            self.L_cp.indptr.data.ptr, self.L_cp.indices.data.ptr,
+            self.info, cusparse.CUSPARSE_ACTION_NUMERIC, self.buffer.data.ptr)
+        self.stream.synchronize()
+
+    def apply(self, b, x, transpose=False):
+        '''
+        Solves L x   = b (if transpose==False), or
+               L^T x = b (if transpose==True) for x,
+
+               where L is the lower triangular matrix passed to the constructor.
+        '''
+        alpha = np.array(1.0, dtype=np.float64) # Scale factor for b
+        x_cp = as_cupy(x)
+        b_cp = as_cupy(b)
+
+        if transpose:
+            cp_transpose = cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE
+        else:
+            cp_transpose = cusparse.CUSPARSE_OPERATION_TRANSPOSE
+
+        cusparse.dcsrsv2_solve(
+            self.handle, cp_transpose,
+            self.size, self.L_cp.nnz, alpha.ctypes.data, self.descr,
+            self.L_cp.data.data.ptr, self.L_cp.indptr.data.ptr, self.L_cp.indices.data.ptr,
+            self.info, b_cp.data.ptr, x_cp.data.ptr, cusparse.CUSPARSE_ACTION_NUMERIC, self.buffer.data.ptr)
+        self.stream.synchronize()
+
+
+###################
+# Preconditioners #
+###################
+
 class Jacobi:
     '''
     The most basic preconditioner imaginable: M=diag(A)
@@ -87,12 +158,21 @@ class Jacobi:
 
 class SymmetricGaussSeidel:
     '''
-    The most basic preconditioner imaginable: M=diag(A)
+    Use a classical symmetric Gauss-Seidel step as a preconditioner:
+
+    A = L+D+L^T
+    M = (L+D) D (L+D)^T, resp.
+    M^{-1} = (L+D)%{-T} D^{-1} (L+D)^{-1}.
+
+    If optimize_trsv=True, use cusparse to analyze the pattern of L+D
+    at construction time, giving faster solves in "apply"
     '''
-    def __init__(self, A):
+    def __init__(self, A, fast_trsv=False):
         t0 = perf_counter()
         self.D = to_device(A.diagonal())
         self.LplusD = to_device(scipy.sparse.tril(A).tocsr())
+        if fast_trsv:
+            self.fast_trsv = FastTrsv(self.LplusD)
         self.v_tmp = to_device(np.zeros(A.shape[0]))
         t1 = perf_counter()
         calls['setup'] += 1
@@ -103,9 +183,15 @@ class SymmetricGaussSeidel:
         Symmetric Gauss-Seidel: v = (L+D)^{-T} D (L+D)^{-1} w
         '''
         t0 = perf_counter()
-        trsv(self.LplusD, w, self.v_tmp)
+        if hasattr(self, 'fast_trsv'):
+            self.fast_trsv.apply(w, self.v_tmp)
+        else:
+            trsv(self.LplusD, w, self.v_tmp)
         vscale_inplace(self.D, self.v_tmp)
-        trsv(self.LplusD, self.v_tmp, v, transpose=True)
+        if hasattr(self, 'fast_trsv'):
+            self.fast_trsv.apply(self.v_tmp, v, transpose=True)
+        else:
+            trsv(self.LplusD, self.v_tmp, v, transpose=True)
         t1 = perf_counter()
         calls['apply'] += 1
         time['apply'] += t1-t0
@@ -131,6 +217,8 @@ class IChol:
     - fill: restrict newly created entries ("fill-in") to positions the sparsity pattern of A^{fill}
       (default 1, 'zero-fill ILU')
 
+    If optimize_trsv=True, uses cusparse to analyze the pattern of L, resulting in faster triangular solves during "apply".
+
     **Avoiding triangular solves**
 
     If poly_k>=0 is given, triangular solves are replaced by a degree <poly_k> Neumann polynomial,
@@ -151,7 +239,7 @@ class IChol:
     IC.apply(y, x)
     '''
 
-    def __init__(self, A, fill=1, droptol=0.0, poly_k=-1):
+    def __init__(self, A, fill=1, droptol=0.0, optimize_trsv=False, poly_k=-1):
         '''
         Factor A \approx LL^T on the host.
 
@@ -185,6 +273,8 @@ class IChol:
             D = scipy.sparse.diags(np.sqrt(d))
             L = (L@D).tocsr()
             self.L = to_device(L)
+            if optimize_trsv:
+                self.fast_trsv = FastTrsv(self.L)
         else:
             d_inv = 1.0/d
             self.d_inv = to_device(d_inv)
@@ -197,6 +287,7 @@ class IChol:
             self.L0 = to_device(L0)
             self.L0t = to_device(L0t)
             self.w_tmp = clone(self.v_tmp)
+
 
         t1 = perf_counter()
         calls['setup'] += 1
@@ -214,8 +305,14 @@ class IChol:
             raise Exception('IChol preconditioner requires vectors to be cuda arrays')
 
         if self.poly_k<0:
-            trsv(self.L, w, self.v_tmp, False)
-            trsv(self.L, self.v_tmp, v, True)
+            if hasattr(self, 'fast_trsv'):
+                self.fast_trsv.apply(w, self.v_tmp, False)
+            else:
+                trsv(self.L, w, self.v_tmp, False)
+            if hasattr(self, 'fast_trsv'):
+                self.fast_trsv.apply(w, self.v_tmp, True)
+            else:
+                trsv(self.L, self.v_tmp, v, True)
         else:
             # Use the degree-k Neumann polynomial to approximate the two triangular solves.
             #

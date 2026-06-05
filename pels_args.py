@@ -56,12 +56,14 @@ def get_pcg_argparser():
                          'Jacobi is simple diagonal scaling,\n'+
                          'SGS is Symmetric Gauss-Seidel (which involves triangular solves)\n'+
                          'IC is an incomplete Cholesky factorization (computed on the CPU).\n')
+    parser.add_argument('-fast_trsv', action=BooleanOptionalAction,
+                    help='For preconditioners that require triangular solves (SGS, IC), use cuSparse preprocessing for better GPU performance.')
     parser.add_argument('-ic_fill', type=int, default=1,
                     help='With -precon=IC or ILU, set the level-of-fill.')
     parser.add_argument('-ic_droptol', type=float, default=0.0,
                     help='With -precon=IC or ILU, set the relative drop tolerance.')
     parser.add_argument('-ic_poly', type=int, default=-1,
-                   help='combine -ilu_poly=<k> with -precon=IC to replace the forward/backward triangular solves\n'+
+                   help='combine -ic_poly=<k> with -precon=IC to replace the forward/backward triangular solves\n'+
                    'by a degree-k Neumann polynomial (k spmvs with L and L^T per CG iteration)')
 
     # add driver-specific command-line arguments for polynomial preconditioning with or without RACE:

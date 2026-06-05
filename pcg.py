@@ -203,9 +203,9 @@ def pcg_demo(args_dict={}):
         if   args.precon == 'Jacobi' or args.precon == 'jacobi':
             M = precon.Jacobi(A_csr)
         elif args.precon == 'SGS':
-            M = precon.SymmetricGaussSeidel(A_csr)
+            M = precon.SymmetricGaussSeidel(A_csr, fast_trsv=args.fast_trsv)
         elif args.precon == 'IC':
-            M = precon.IChol(A_csr, args.ic_fill, args.ic_droptol, args.ic_poly)
+            M = precon.IChol(A_csr, args.ic_fill, args.ic_droptol, poly_k=args.ic_poly, fast_trsv=args.fast_trsv)
         else:
             raise Exception("Unsupported parameter: -precon='"+args.precon+"'")
         if args.fmt == 'SELL' and A.sigma!=1:

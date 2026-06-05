@@ -10,9 +10,12 @@
 
 import numpy as np
 import scipy
+
 import cupy as cp
 import cupyx.scipy.sparse as csp
 from cupyx.scipy.sparse.linalg import spsolve_triangular
+from cupy.cuda import cusolver, cusparse
+
 from numba import cuda
 
 def as_cupy(A, as_csc=False):
@@ -45,10 +48,15 @@ def cp_trsv(L, b, x, transpose=False):
     (as used in the numba cuda_kernels), wraps the input in cupy and
     solves the lower triangular system Lx = b (if transpose==False),
     or the upper triangular system   L^Tx = b (if transpose==True).
+
+    If you want to do many trsvs, use the class FastTrsv from precon.py instead,
+    it performs an analysis+solve workflow using cuSparse.
     '''
-    L_cp = as_cupy(L)
     x_cp = as_cupy(x)
     b_cp = as_cupy(b)
+
+    # no analysis has been performed - use cupy fallback
+    L_cp = as_cupy(L)
     if transpose:
         x_cp[:] = csp.linalg.spsolve_triangular(L_cp.T, b_cp, lower=False)
     else:
