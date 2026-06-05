@@ -11,6 +11,7 @@ if [ ! -d $ENV ]; then
     pip install numpy scipy numba
     pip install numba_cuda[cu13]
     pip install cupy
+    pip install matplotlib
     pip install pytest parameterized
     #pip install pyamg
 else
