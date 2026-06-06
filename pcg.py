@@ -187,7 +187,6 @@ def pcg_demo(args_dict={}):
 
     # take compilation time out of the balance:
     compile_all()
-    precon.compile_all()
 
     # we want to make sure what we measure during CG in total
     # is consistent with the sum of the kernel calls and their

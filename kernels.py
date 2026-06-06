@@ -268,6 +268,20 @@ def dot(x,y):
     flop['dot'] += 2*x.size
     return s.copy_to_host()[0]
 
+def vscale(v, x, y):
+    '''
+    Helper function to compute y = v.*x (element-wise multiplication of vectors)
+    '''
+    cu_vscale.forall(v.size)(v,x,y)
+    cuda.synchronize()
+
+def vscale_inplace(v, x):
+    '''
+    Helper function to compute x = v.*x (in-place element-wise multiplication of vectors)
+    '''
+    cu_vscale_inplace.forall(v.size)(v,x)
+    cuda.synchronize()
+
 def perf_report():
     '''
     After running a solver, print a performance summary of the

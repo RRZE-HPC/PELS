@@ -11,13 +11,15 @@
 import numpy as np
 import scipy
 from scipy.sparse.linalg import spilu
+from time import perf_counter
 
-import cupy
+import cupy as cp
 from cupy.cuda import cusolver, cusparse
 from cupyx.scipy.sparse.linalg import spilu as cupy_spilu
 
-from kernels import *
+import kernels
 from cuda_precon import *
+from cupy_kernels import as_cupy
 
 from numba import cuda
 
@@ -28,20 +30,6 @@ time = {'setup': 0, 'apply': 0.0, 'axpby': 0.0}
 
 def invert(v):
     cu_invert.forall(v.size)(v)
-    cuda.synchronize()
-
-def vscale(v, x, y):
-    '''
-    Helper function to compute y = v.*x (element-wise multiplication of vectors)
-    '''
-    cu_vscale.forall(v.size)(v,x,y)
-    cuda.synchronize()
-
-def vscale_inplace(v, x):
-    '''
-    Helper function to compute x = v.*x (in-place element-wise multiplication of vectors)
-    '''
-    cu_vscale_inplace.forall(v.size)(v,x)
     cuda.synchronize()
 
 def neumann(A0, k, v0, x):
@@ -69,42 +57,80 @@ class FastTrsv:
         '''
         Run analysis to optimize triangular solves (pass the output to cp_trsv)
         '''
-        self.size = L.shape[0]
+        n = L.shape[0]
+        nnz = L.nnz
+        self.shape = L.shape
+        self.nnz   = L.nnz
         self.L_cp = as_cupy(L)
         self.L_cp.sort_indices()
 
-        # Get the current cuSPARSE handle and stream
-        self.device = cupy.cuda.Device()
-        self.handle = self.device.cusparse_handle
-        self.stream = cp.cuda.get_current_stream()
+        # Create Sparse Matrix Descriptor for L
+        self.handle = cusparse.create()
+        self.matA = cusparse.createCsr(
+                n, n, nnz,
+                self.L_cp.indptr.data.ptr, self.L_cp.indices.data.ptr, self.L_cp.data.data.ptr,
+                cusparse.CUSPARSE_INDEX_32I, cusparse.CUSPARSE_INDEX_32I,
+                cusparse.CUSPARSE_INDEX_BASE_ZERO, cp.cuda.runtime.CUDA_R_64F
+                )
 
-        # Create the Matrix Descriptor and set its properties
-        self.descr = cusparse.createMatDescr()
-        cusparse.setMatType(self.descr, cusparse.CUSPARSE_MATRIX_TYPE_GENERAL)
-        cusparse.setMatIndexBase(self.descr, cusparse.CUSPARSE_INDEX_BASE_ZERO)
-        cusparse.setMatFillMode(self.descr, cusparse.CUSPARSE_FILL_MODE_LOWER)
-        cusparse.setMatDiagType(self.descr, cusparse.CUSPARSE_DIAG_TYPE_NON_UNIT)
+        # Specify that A is Lower-Triangular and Non-Unit diagonal
+        fill_mode = cp.array(cusparse.CUSPARSE_FILL_MODE_LOWER, dtype=cp.int32)
+        diag_type = cp.array(cusparse.CUSPARSE_DIAG_TYPE_NON_UNIT, dtype=cp.int32)
+        cusparse.spMatSetAttribute(self.matA, cusparse.CUSPARSE_SPMAT_FILL_MODE, fill_mode)
+        cusparse.spMatSetAttribute(self.matA, cusparse.CUSPARSE_SPMAT_DIAG_TYPE, diag_type)
 
-        self.info = cusparse.createCsrsv2Info()
+        # Create Dense Matrix Descriptors for B and X
+        # Note: SpSM expects row-major or column-major layouts specified explicitly
+        x_cp = cp.zeros((n,), dtype=cp.float64)
+        b_cp = cp.zeros((n,), dtype=cp.float64)
+        matX = cusparse.createDnMat(n, 1, 1, x_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_ROW)
+        matB = cusparse.createDnMat(n, 1, 1, b_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_ROW)
 
-        # Get required buffer size for analysis and solve stages
-        buffer_size = cusparse.dcsrsv2_bufferSize(
-            self.handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
-            self.size, self.L_cp.nnz, self.descr, self.L_cp.data.data.ptr,
-            self.L_cp.indptr.data.ptr, self.L_cp.indices.data.ptr, self.info)
-        buffer_size_T = cusparse.dcsrsv2_bufferSize(
-            self.handle, cusparse.CUSPARSE_OPERATION_TRANSPOSE,
-            self.size, self.L_cp.nnz, self.descr, self.L_cp.data.data.ptr,
-            self.L_cp.indptr.data.ptr, self.L_cp.indices.data.ptr, self.info)
-        print(f'TROET buffer_sizes = {buffer_size}, {buffer_size_T}')
-        self.buffer_size = np.max([buffer_size, buffer_size_T])
-        self.buffer = cp.empty(self.buffer_size, dtype=cp.int8)
-        cusparse.dcsrsv2_analysis(
-            self.handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
-            self.size, self.L_cp.nnz, self.descr, self.L_cp.data.data.ptr,
-            self.L_cp.indptr.data.ptr, self.L_cp.indices.data.ptr,
-            self.info, cusparse.CUSPARSE_ACTION_NUMERIC, self.buffer.data.ptr)
-        self.stream.synchronize()
+        # Create an opaque SpSM descriptor to hold the cached analysis phase data
+        self.spsmDescr  = cusparse.spSM_createDescr()
+        # and another for the tranpsosed operation, x = L^{-T}b
+        self.spsmDescrT = cusparse.spSM_createDescr()
+
+        self.alpha = np.array(1.0,dtype='float64')
+
+        ##########################################################
+        # Analysis Phase -- run for standard and transposed case #
+        ##########################################################
+
+        # Query buffer size needed for the analysis and execution steps
+        bufferSize = cusparse.spSM_bufferSize(
+                self.handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
+                alpha=self.alpha.ctypes.data, matA=self.matA, matB=matB, matC=matX,
+                computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
+                spsmDescr=self.spsmDescr)
+        bufferSizeT = cusparse.spSM_bufferSize(
+                self.handle, cusparse.CUSPARSE_OPERATION_TRANSPOSE, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
+                alpha=self.alpha.ctypes.data, matA=self.matA, matB=matB, matC=matX,
+                computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
+                spsmDescr=self.spsmDescr)
+
+        bufferSize = max(bufferSize, bufferSizeT)
+        self.buffer = cp.empty(bufferSize, dtype=cp.int8)
+
+        cusparse.spSM_analysis(
+            self.handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
+            alpha=self.alpha.ctypes.data, matA=self.matA, matB=matB, matC=matX,
+            computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
+            spsmDescr=self.spsmDescr, externalBuffer=self.buffer.data.ptr)
+
+        cusparse.spSM_analysis(
+            self.handle, cusparse.CUSPARSE_OPERATION_TRANSPOSE, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
+            alpha=self.alpha.ctypes.data, matA=self.matA, matB=matB, matC=matX,
+            computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
+            spsmDescr=self.spsmDescrT, externalBuffer=self.buffer.data.ptr)
+        cusparse.destroyDnMat(matB)
+        cusparse.destroyDnMat(matX)
+
+    def __del__(self):
+        cusparse.spSM_destroyDescr(self.spsmDescr)
+        cusparse.spSM_destroyDescr(self.spsmDescrT)
+        cusparse.destroySpMat(self.matA)
+        cusparse.destroy(self.handle)
 
     def apply(self, b, x, transpose=False):
         '''
@@ -113,22 +139,36 @@ class FastTrsv:
 
                where L is the lower triangular matrix passed to the constructor.
         '''
+        t0 = perf_counter()
         alpha = np.array(1.0, dtype=np.float64) # Scale factor for b
         x_cp = as_cupy(x)
         b_cp = as_cupy(b)
+        n = x_cp.size
+        matX = cusparse.createDnMat(n, 1, 1, x_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_ROW)
+        matB = cusparse.createDnMat(n, 1, 1, b_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_ROW)
 
         if transpose:
-            cp_transpose = cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE
-        else:
             cp_transpose = cusparse.CUSPARSE_OPERATION_TRANSPOSE
+            spsmDescr = self.spsmDescrT
+        else:
+            cp_transpose = cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE
+            spsmDescr = self.spsmDescr
 
-        cusparse.dcsrsv2_solve(
-            self.handle, cp_transpose,
-            self.size, self.L_cp.nnz, alpha.ctypes.data, self.descr,
-            self.L_cp.data.data.ptr, self.L_cp.indptr.data.ptr, self.L_cp.indices.data.ptr,
-            self.info, b_cp.data.ptr, x_cp.data.ptr, cusparse.CUSPARSE_ACTION_NUMERIC, self.buffer.data.ptr)
-        self.stream.synchronize()
+        cusparse.spSM_solve(
+                self.handle, cp_transpose, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
+                alpha=alpha.ctypes.data, matA=self.matA, matB=matB, matC=matX,
+                computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
+                spsmDescr=spsmDescr, externalBuffer=self.buffer.data.ptr)
 
+        cusparse.destroyDnMat(matB)
+        cusparse.destroyDnMat(matX)
+
+        t1 = perf_counter()
+        kernels.time['trsv']  += t1-t0
+        kernels.calls['trsv'] += 1
+        kernels.load['trsv']  += 12*self.nnz+8*(self.shape[0]+self.shape[1])
+        kernels.store['trsv'] += 8*self.shape[0]
+        kernels.flop['trsv'] += 2*self.nnz
 
 ###################
 # Preconditioners #
@@ -140,7 +180,7 @@ class Jacobi:
     '''
     def __init__(self, A):
         t0 = perf_counter()
-        self.D_inv = to_device(A.diagonal())
+        self.D_inv = kernels.to_device(A.diagonal())
         invert(self.D_inv)
         t1 = perf_counter()
         calls['setup'] += 1
@@ -169,11 +209,11 @@ class SymmetricGaussSeidel:
     '''
     def __init__(self, A, fast_trsv=False):
         t0 = perf_counter()
-        self.D = to_device(A.diagonal())
-        self.LplusD = to_device(scipy.sparse.tril(A).tocsr())
+        self.D = kernels.to_device(A.diagonal())
+        self.LplusD = kernels.to_device(scipy.sparse.tril(A).tocsr())
         if fast_trsv:
             self.fast_trsv = FastTrsv(self.LplusD)
-        self.v_tmp = to_device(np.zeros(A.shape[0]))
+        self.v_tmp = kernels.to_device(np.zeros(A.shape[0]))
         t1 = perf_counter()
         calls['setup'] += 1
         time['setup'] += t1-t0
@@ -186,12 +226,12 @@ class SymmetricGaussSeidel:
         if hasattr(self, 'fast_trsv'):
             self.fast_trsv.apply(w, self.v_tmp)
         else:
-            trsv(self.LplusD, w, self.v_tmp)
-        vscale_inplace(self.D, self.v_tmp)
+            kernels.trsv(self.LplusD, w, self.v_tmp)
+        kernels.vscale_inplace(self.D, self.v_tmp)
         if hasattr(self, 'fast_trsv'):
             self.fast_trsv.apply(self.v_tmp, v, transpose=True)
         else:
-            trsv(self.LplusD, self.v_tmp, v, transpose=True)
+            kernels.trsv(self.LplusD, self.v_tmp, v, transpose=True)
         t1 = perf_counter()
         calls['apply'] += 1
         time['apply'] += t1-t0
@@ -234,8 +274,8 @@ class IChol:
 
     A  = matrix_generator.create_matrix('Laplace500x500')
     IC = IChol(A, fill=3, droptol=0.01) # uses forward/backward solves
-    y  = kernels.to_device(numpy.random.random(A.shape[0]))
-    x  = kernels.to_device(numpy.zeros(A.shape[0]))
+    y  = kernels.kernels.to_device(numpy.random.random(A.shape[0]))
+    x  = kernels.kernels.to_device(numpy.zeros(A.shape[0]))
     IC.apply(y, x)
     '''
 
@@ -249,7 +289,7 @@ class IChol:
 
         Output:
 
-          self.L: lower triangular factor, copied to device using "to_device"
+          self.L: lower triangular factor, copied to device using "kernels.to_device"
         '''
 
         t0 = perf_counter()
@@ -258,7 +298,7 @@ class IChol:
         # For poly_k>0 we use a Neumann polynomial to approximate the triangular solves
         self.poly_k = poly_k
         # create a temporary vector for the 'apply' function:
-        self.v_tmp = to_device(np.zeros(A.shape[0]))
+        self.v_tmp = kernels.to_device(np.zeros(A.shape[0]))
 
         # Compute factorization using SciPy's ILU0. Because A is spd,
         # we (i) do not need pivoting, and (b) can scale the result such that
@@ -272,20 +312,20 @@ class IChol:
             # scale such that A \approx LL^T
             D = scipy.sparse.diags(np.sqrt(d))
             L = (L@D).tocsr()
-            self.L = to_device(L)
+            self.L = kernels.to_device(L)
             if optimize_trsv:
                 self.fast_trsv = FastTrsv(self.L)
         else:
             d_inv = 1.0/d
-            self.d_inv = to_device(d_inv)
+            self.d_inv = kernels.to_device(d_inv)
 
             # store the (negative) factor L and its explicit transpose, but skip the diagonal:
             # L = (I - L0), L^T = (I - L0t)
             # for implementing the Neumann polynomial approximation if the inverse (see 'apply')
             L0  = scipy.sparse.tril(-L,k=-1, format='csr')
             L0t = L0.T.tocsr()
-            self.L0 = to_device(L0)
-            self.L0t = to_device(L0t)
+            self.L0 = kernels.to_device(L0)
+            self.L0t = kernels.to_device(L0t)
             self.w_tmp = clone(self.v_tmp)
 
 
@@ -308,11 +348,11 @@ class IChol:
             if hasattr(self, 'fast_trsv'):
                 self.fast_trsv.apply(w, self.v_tmp, False)
             else:
-                trsv(self.L, w, self.v_tmp, False)
+                kernels.trsv(self.L, w, self.v_tmp, False)
             if hasattr(self, 'fast_trsv'):
                 self.fast_trsv.apply(w, self.v_tmp, True)
             else:
-                trsv(self.L, self.v_tmp, v, True)
+                kernels.trsv(self.L, self.v_tmp, v, True)
         else:
             # Use the degree-k Neumann polynomial to approximate the two triangular solves.
             #
