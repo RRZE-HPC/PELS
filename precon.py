@@ -1,3 +1,4 @@
+self\.buf
 #/*******************************************************************************************/
 #/* This file is part of the training material available at                                 */
 #/* https://github.com/jthies/PELS                                                          */
@@ -81,17 +82,20 @@ class FastTrsv:
 
         # Create Dense Matrix Descriptors for B and X
         # Note: SpSM expects row-major or column-major layouts specified explicitly
+        # We keep these descriptors alive as required by the Generic API.
         x_cp = cp.zeros((n,), dtype=cp.float64)
         b_cp = cp.zeros((n,), dtype=cp.float64)
-        matX = cusparse.createDnMat(n, 1, n, x_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_COL)
-        matB = cusparse.createDnMat(n, 1, n, b_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_COL)
+        self.matX = cusparse.createDnMat(n, 1, n, x_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F,
+                                         cusparse.CUSPARSE_ORDER_COL)
+        self.matB = cusparse.createDnMat(n, 1, n, b_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F,
+                                         cusparse.CUSPARSE_ORDER_COL)
 
         # Create an opaque SpSM descriptor to hold the cached analysis phase data
         self.spsmDescr  = cusparse.spSM_createDescr()
-        # and another for the tranpsosed operation, x = L^{-T}b
+        # and another for the transposed operation, x = L^{-T}b
         self.spsmDescrT = cusparse.spSM_createDescr()
 
-        self.alpha = np.array(1.0,dtype='float64')
+        self.alpha = np.array(1.0, dtype='float64')
 
         ##########################################################
         # Analysis Phase -- run for standard and transposed case #
@@ -99,36 +103,43 @@ class FastTrsv:
 
         # Query buffer size needed for the analysis and execution steps
         bufferSize = cusparse.spSM_bufferSize(
-                self.handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
-                alpha=self.alpha.ctypes.data, matA=self.matA, matB=matB, matC=matX,
+                self.handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
+                cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
+                alpha=self.alpha.ctypes.data, matA=self.matA, matB=self.matB, matC=self.matX,
                 computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
                 spsmDescr=self.spsmDescr)
         bufferSizeT = cusparse.spSM_bufferSize(
-                self.handle, cusparse.CUSPARSE_OPERATION_TRANSPOSE, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
-                alpha=self.alpha.ctypes.data, matA=self.matA, matB=matB, matC=matX,
+                self.handle, cusparse.CUSPARSE_OPERATION_TRANSPOSE,
+                cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
+                alpha=self.alpha.ctypes.data, matA=self.matA, matB=self.matB, matC=self.matX,
                 computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
-                spsmDescr=self.spsmDescr)
+                spsmDescr=self.spsmDescrT)
 
-        bufferSize = max(bufferSize, bufferSizeT)
+        # The externalBuffer must be preserved and remain unmodified between the analysis and solve
+        # phases. Since we have two separate analyses (non-transpose and transpose), we need two
+        # buffers.
         self.buffer = cp.empty(bufferSize, dtype=cp.int8)
+        self.bufferT = cp.empty(bufferSizeT, dtype=cp.int8)
 
         cusparse.spSM_analysis(
-            self.handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
-            alpha=self.alpha.ctypes.data, matA=self.matA, matB=matB, matC=matX,
+            self.handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
+            cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
+            alpha=self.alpha.ctypes.data, matA=self.matA, matB=self.matB, matC=self.matX,
             computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
             spsmDescr=self.spsmDescr, externalBuffer=self.buffer.data.ptr)
 
         cusparse.spSM_analysis(
-            self.handle, cusparse.CUSPARSE_OPERATION_TRANSPOSE, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
-            alpha=self.alpha.ctypes.data, matA=self.matA, matB=matB, matC=matX,
+            self.handle, cusparse.CUSPARSE_OPERATION_TRANSPOSE,
+            cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
+            alpha=self.alpha.ctypes.data, matA=self.matA, matB=self.matB, matC=self.matX,
             computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
-            spsmDescr=self.spsmDescrT, externalBuffer=self.buffer.data.ptr)
-        cusparse.destroyDnMat(matB)
-        cusparse.destroyDnMat(matX)
+            spsmDescr=self.spsmDescrT, externalBuffer=self.bufferT.data.ptr)
 
     def __del__(self):
         cusparse.spSM_destroyDescr(self.spsmDescr)
         cusparse.spSM_destroyDescr(self.spsmDescrT)
+        cusparse.destroyDnMat(self.matB)
+        cusparse.destroyDnMat(self.matX)
         cusparse.destroySpMat(self.matA)
         cusparse.destroy(self.handle)
 
@@ -140,28 +151,27 @@ class FastTrsv:
                where L is the lower triangular matrix passed to the constructor.
         '''
         t0 = perf_counter()
-        alpha = np.array(1.0, dtype=np.float64) # Scale factor for b
         x_cp = as_cupy(x)
         b_cp = as_cupy(b)
-        n = x_cp.size
-        matX = cusparse.createDnMat(n, 1, n, x_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_COL)
-        matB = cusparse.createDnMat(n, 1, n, b_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_COL)
+
+        # Update the descriptors to point to the current data
+        cusparse.dnMatSetValues(self.matX, x_cp.data.ptr)
+        cusparse.dnMatSetValues(self.matB, b_cp.data.ptr)
 
         if transpose:
             cp_transpose = cusparse.CUSPARSE_OPERATION_TRANSPOSE
             spsmDescr = self.spsmDescrT
+            buffer_ptr = self.bufferT.data.ptr
         else:
             cp_transpose = cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE
             spsmDescr = self.spsmDescr
+            buffer_ptr = self.buffer.data.ptr
 
         cusparse.spSM_solve(
                 self.handle, cp_transpose, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
-                alpha=alpha.ctypes.data, matA=self.matA, matB=matB, matC=matX,
+                alpha=self.alpha.ctypes.data, matA=self.matA, matB=self.matB, matC=self.matX,
                 computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
-                spsmDescr=spsmDescr, externalBuffer=self.buffer.data.ptr)
-
-        cusparse.destroyDnMat(matB)
-        cusparse.destroyDnMat(matX)
+                spsmDescr=spsmDescr, externalBuffer=buffer_ptr)
 
         t1 = perf_counter()
         kernels.time['trsv']  += t1-t0
