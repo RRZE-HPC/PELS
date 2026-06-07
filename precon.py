@@ -1,4 +1,3 @@
-self\.buf
 #/*******************************************************************************************/
 #/* This file is part of the training material available at                                 */
 #/* https://github.com/jthies/PELS                                                          */
@@ -75,10 +74,10 @@ class FastTrsv:
                 )
 
         # Specify that A is Lower-Triangular and Non-Unit diagonal
-        fill_mode = np.array([cusparse.CUSPARSE_FILL_MODE_LOWER], dtype=np.int32)
-        diag_type = np.array([cusparse.CUSPARSE_DIAG_TYPE_NON_UNIT], dtype=np.int32)
-        cusparse.spMatSetAttribute(self.matA, cusparse.CUSPARSE_SPMAT_FILL_MODE, fill_mode.ctypes.data, 4)
-        cusparse.spMatSetAttribute(self.matA, cusparse.CUSPARSE_SPMAT_DIAG_TYPE, diag_type.ctypes.data, 4)
+        fill_mode = np.array(cusparse.CUSPARSE_FILL_MODE_LOWER, dtype=np.int32)
+        diag_type = np.array(cusparse.CUSPARSE_DIAG_TYPE_NON_UNIT, dtype=np.int32)
+        cusparse.spMatSetAttribute(self.matA, cusparse.CUSPARSE_SPMAT_FILL_MODE, fill_mode)
+        cusparse.spMatSetAttribute(self.matA, cusparse.CUSPARSE_SPMAT_DIAG_TYPE, diag_type)
 
         # Create Dense Matrix Descriptors for B and X
         # Note: SpSM expects row-major or column-major layouts specified explicitly
@@ -173,6 +172,7 @@ class FastTrsv:
                 computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
                 spsmDescr=spsmDescr, externalBuffer=buffer_ptr)
 
+        cuda.synchronize()
         t1 = perf_counter()
         kernels.time['trsv']  += t1-t0
         kernels.calls['trsv'] += 1

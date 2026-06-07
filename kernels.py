@@ -177,6 +177,7 @@ def trsv(L, b, x, transpose=False):
         raise Exception('trsv only implemented for csr or csc matrices so far -- got sellcs_matrix')
     else:
         raise TypeError('trsv wrapper only implemented for scipy.sparse.csr_matrix or scipy.sparse.csc_matrix -- got '+str(type(L)))
+    cuda.synchronize()
     t1 = perf_counter()
     time['trsv']  += t1-t0
     calls['trsv'] += 1
