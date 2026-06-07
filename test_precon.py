@@ -71,11 +71,10 @@ def check_same_sparsity_pattern(A1, A2):
 class ICholTest(unittest.TestCase):
 
     def setUp(self):
-        self.matrix = 'Laplace4x4'
         self.A = create_matrix(self.matrix)
-        self.ic         = IChol(self.A, droptol=0.0, fill=1, poly_k=-1)
-        self.ic_fast    = IChol(self.A, droptol=0.0, fill=1, poly_k=-1, fast_trsv=True)
-        self.ic_poly    = IChol(self.A, droptol=0.0, fill=1, poly_k=1)
+        self.ic         = IChol(self.A, droptol=self.droptol, fill=self.fill, poly_k=-1)
+        self.ic_fast    = IChol(self.A, droptol=self.droptol, fill=self.fill, poly_k=-1, fast_trsv=True)
+        self.ic_poly    = IChol(self.A, droptol=self.droptol, fill=self.fill, poly_k=1)
         self.tol = 1.0e-10
 
 

@@ -74,17 +74,17 @@ class FastTrsv:
                 )
 
         # Specify that A is Lower-Triangular and Non-Unit diagonal
-        fill_mode = cp.array(cusparse.CUSPARSE_FILL_MODE_LOWER, dtype=cp.int32)
-        diag_type = cp.array(cusparse.CUSPARSE_DIAG_TYPE_NON_UNIT, dtype=cp.int32)
-        cusparse.spMatSetAttribute(self.matA, cusparse.CUSPARSE_SPMAT_FILL_MODE, fill_mode)
-        cusparse.spMatSetAttribute(self.matA, cusparse.CUSPARSE_SPMAT_DIAG_TYPE, diag_type)
+        fill_mode = np.array([cusparse.CUSPARSE_FILL_MODE_LOWER], dtype=np.int32)
+        diag_type = np.array([cusparse.CUSPARSE_DIAG_TYPE_NON_UNIT], dtype=np.int32)
+        cusparse.spMatSetAttribute(self.matA, cusparse.CUSPARSE_SPMAT_FILL_MODE, fill_mode.ctypes.data, 4)
+        cusparse.spMatSetAttribute(self.matA, cusparse.CUSPARSE_SPMAT_DIAG_TYPE, diag_type.ctypes.data, 4)
 
         # Create Dense Matrix Descriptors for B and X
         # Note: SpSM expects row-major or column-major layouts specified explicitly
         x_cp = cp.zeros((n,), dtype=cp.float64)
         b_cp = cp.zeros((n,), dtype=cp.float64)
-        matX = cusparse.createDnMat(n, 1, 1, x_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_ROW)
-        matB = cusparse.createDnMat(n, 1, 1, b_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_ROW)
+        matX = cusparse.createDnMat(n, 1, n, x_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_COL)
+        matB = cusparse.createDnMat(n, 1, n, b_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_COL)
 
         # Create an opaque SpSM descriptor to hold the cached analysis phase data
         self.spsmDescr  = cusparse.spSM_createDescr()
@@ -144,8 +144,8 @@ class FastTrsv:
         x_cp = as_cupy(x)
         b_cp = as_cupy(b)
         n = x_cp.size
-        matX = cusparse.createDnMat(n, 1, 1, x_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_ROW)
-        matB = cusparse.createDnMat(n, 1, 1, b_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_ROW)
+        matX = cusparse.createDnMat(n, 1, n, x_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_COL)
+        matB = cusparse.createDnMat(n, 1, n, b_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F, cusparse.CUSPARSE_ORDER_COL)
 
         if transpose:
             cp_transpose = cusparse.CUSPARSE_OPERATION_TRANSPOSE
@@ -350,7 +350,7 @@ class IChol:
             else:
                 kernels.trsv(self.L, w, self.v_tmp, False)
             if hasattr(self, 'fast_trsv'):
-                self.fast_trsv.apply(w, self.v_tmp, True)
+                self.fast_trsv.apply(self.v_tmp, v, True)
             else:
                 kernels.trsv(self.L, self.v_tmp, v, True)
         else:
