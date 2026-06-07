@@ -23,18 +23,17 @@ def create_precon(A_csr, label):
 
     M = None
     # default options (IC0)
-    ilu_droptol = 0.0
-    ilu_fill = 1
-    ilu_poly = -1
+    ic_droptol = 0.0
+    ic_fill = 1
+    ic_poly = -1
+    fast_trsv = False
     # setup preconditioner...
     if   label == 'Jacobi' or label == 'jacobi':
         M = precon.Jacobi(A_csr)
     elif label == 'SGS':
-        M = precon.SymmetricGaussSeidel(A_csr)
-    elif label == 'SciPyIC0':
-        M = precon.IChol(A_csr, ilu_fill, ilu_droptol, ilu_poly)
-    elif label=='CuSolverIC0':
-            M = precon.CuSolverIChol0(A_csr)
+        M = precon.SymmetricGaussSeidel(A_csr, fast_trsv)
+    elif label == 'IChol':
+        M = precon.IChol(A_csr, ic_fill, ic_droptol, poly_k=ic_poly, fast_trsv=fast_trsv)
     elif label is not None:
             raise(f'precon label not implemented in test_pcg.py: {label}')
     return M
@@ -43,13 +42,12 @@ def create_precon(A_csr, label):
     [None, 'Laplace10x10', 30],
     ['Jacobi','Laplace10x10', 30],
     ['SGS','Laplace10x10', 20],
-    ['SciPyIC0','Laplace10x10', 25],
-    ['CuSolverIC0', 'Laplace10x10', 25],
+    ['IChol','Laplace10x10', 25],
     [None, 'Laplace20x20', 60],
     ['Jacobi','Laplace40x40',120],
     ['SGS','Laplace40x40', 90],
-    ['SciPyIC0','Laplace40x40', 66],
-    ['CuSolverIC0','Laplace40x40', 66] ])
+    ['IChol','Laplace40x40', 66]
+    ])
 class CgTest(unittest.TestCase):
 
     def setUp(self):

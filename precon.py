@@ -39,8 +39,8 @@ def neumann(A0, k, v0, x):
     x = A^{-1} v0 = (I-A0)^{-1} v0 \approx \sum_{j=0}^k (A0^j v0)
 
     '''
-    v = clone(v0)
-    A0v = clone(v0)
+    v = kernels.clone(v0)
+    A0v = kernels.clone(v0)
     # set x = v0 (= A0^0 v0)
     axpby(1.0,v0, 0.0,x)
     for _ in range(k):
@@ -191,7 +191,7 @@ class Jacobi:
         Diagonal scaling, v = D^{-1}w
         '''
         t0 = perf_counter()
-        vscale(self.D_inv, w, v)
+        kernels.vscale(self.D_inv, w, v)
         t1 = perf_counter()
         calls['apply'] += 1
         time['apply'] += t1-t0
@@ -204,7 +204,7 @@ class SymmetricGaussSeidel:
     M = (L+D) D (L+D)^T, resp.
     M^{-1} = (L+D)%{-T} D^{-1} (L+D)^{-1}.
 
-    If optimize_trsv=True, use cusparse to analyze the pattern of L+D
+    If fast_trsv=True, use cusparse to analyze the pattern of L+D
     at construction time, giving faster solves in "apply"
     '''
     def __init__(self, A, fast_trsv=False):
@@ -257,7 +257,7 @@ class IChol:
     - fill: restrict newly created entries ("fill-in") to positions the sparsity pattern of A^{fill}
       (default 1, 'zero-fill ILU')
 
-    If optimize_trsv=True, uses cusparse to analyze the pattern of L, resulting in faster triangular solves during "apply".
+    If fast_trsv=True, uses cusparse to analyze the pattern of L, resulting in faster triangular solves during "apply".
 
     **Avoiding triangular solves**
 
@@ -274,12 +274,12 @@ class IChol:
 
     A  = matrix_generator.create_matrix('Laplace500x500')
     IC = IChol(A, fill=3, droptol=0.01) # uses forward/backward solves
-    y  = kernels.kernels.to_device(numpy.random.random(A.shape[0]))
-    x  = kernels.kernels.to_device(numpy.zeros(A.shape[0]))
+    y  = kernels.to_device(numpy.random.random(A.shape[0]))
+    x  = kernels.to_device(numpy.zeros(A.shape[0]))
     IC.apply(y, x)
     '''
 
-    def __init__(self, A, fill=1, droptol=0.0, optimize_trsv=False, poly_k=-1):
+    def __init__(self, A, fill=1, droptol=0.0, fast_trsv=False, poly_k=-1):
         '''
         Factor A \approx LL^T on the host.
 
@@ -313,7 +313,7 @@ class IChol:
             D = scipy.sparse.diags(np.sqrt(d))
             L = (L@D).tocsr()
             self.L = kernels.to_device(L)
-            if optimize_trsv:
+            if fast_trsv:
                 self.fast_trsv = FastTrsv(self.L)
         else:
             d_inv = 1.0/d
@@ -326,7 +326,7 @@ class IChol:
             L0t = L0.T.tocsr()
             self.L0 = kernels.to_device(L0)
             self.L0t = kernels.to_device(L0t)
-            self.w_tmp = clone(self.v_tmp)
+            self.w_tmp = kernels.clone(self.v_tmp)
 
 
         t1 = perf_counter()
@@ -363,7 +363,7 @@ class IChol:
             neumann(self.L0, self.poly_k, w, self.v_tmp)
 
             # 2. W_tmp = D^{-1}v_tmp
-            vscale(self.d_inv, self.v_tmp, self.w_tmp)
+            kernels.vscale(self.d_inv, self.v_tmp, self.w_tmp)
 
             # 3. v = L^{-T}w_tmp \approx \sum_{j=0}^k L0t^j w_tmp
             neumann(self.L0t, self.poly_k, self.w_tmp, v)
