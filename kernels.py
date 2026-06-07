@@ -328,7 +328,12 @@ def spmv_bench(matrix, mat_fmt='CRS', arrow=False):
     rand_seed=314159265
     np.random.seed(rand_seed)
 
-    A = create_matrix(matrix, imbal=arrow)
+    if type(matrix)==str:
+        A = create_matrix(matrix, imbal=arrow)
+     elif type(A)==scipy.sparse.csr_matrix:
+         A = matrix
+     else:
+         raise ValueError(f'argument "matrix" must be eithr a string or a csr_matrix object. Got "{type(matrix}".')
     N = A.shape[0]
     print(f'nnz = {A.nnz}, nrows = {N}, nnzr = {float(A.nnz)/float(N):4.2g}')
     if 'SELL' in mat_fmt:
