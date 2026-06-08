@@ -212,7 +212,7 @@ class SymmetricGaussSeidel:
 
     A = L+D+L^T
     M = (L+D) D (L+D)^T, resp.
-    M^{-1} = (L+D)%{-T} D^{-1} (L+D)^{-1}.
+    M^{-1} = (L+D)^{-T} D^{-1} (L+D)^{-1}.
 
     If fast_trsv=True, use cusparse to analyze the pattern of L+D
     at construction time, giving faster solves in "apply"
