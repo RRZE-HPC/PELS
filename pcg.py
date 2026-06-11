@@ -214,7 +214,7 @@ def pcg_demo(args_dict={}):
                 x_ex = to_device(x_ex)
                 b    = to_device(b)
             if args.precon.startswith('IC0'):
-                M = cusolver_ichol.IChol(A_csr)
+                M = cusolver_ichol.IChol(A_csr, args.ic_poly)
             else:
                 M = precon.IChol(A_csr, args.ic_fill, args.ic_droptol, poly_k=args.ic_poly, fast_trsv=args.fast_trsv)
         else:

@@ -27,7 +27,7 @@ from numba import cuda
 # total number of calls
 calls = {'setup': 0, 'apply': 0}
 # total elapsed time in seconds
-time = {'setup': 0, 'apply': 0.0, 'axpby': 0.0}
+time = {'setup': 0, 'apply': 0.0}
 
 def invert(v):
     cu_invert.forall(v.size)(v)
@@ -43,12 +43,12 @@ def neumann(A0, k, v0, x):
     v = kernels.clone(v0)
     A0v = kernels.clone(v0)
     # set x = v0 (= A0^0 v0)
-    axpby(1.0,v0, 0.0,x)
+    kernels.axpby(1.0,v0, 0.0,x)
     for _ in range(k):
         # A0v = A0^{j+1}v0
         spmv(A0, v, A0v)
         # x += v0 to yield x_k
-        axpby(1.0, A0v, 1.0, x)
+        kernels.axpby(1.0, A0v, 1.0, x)
         # swap the vectors
         A0v, v = v, A0v
 
@@ -59,7 +59,7 @@ def cusparse_neumann(matA, k, v0, x, n, dtype, nnz, handle=None):
 
     This uses the iteration x_{j+1} = v0 + A * x_j, with x_0 = v0.
     Implemented using cusparseSpMV with alpha=1, beta=1.
-    
+
     Input:
       matA: cusparseSpMatDescr_t for matrix A (should have unit diagonal attributes if needed)
       k: degree of polynomial
@@ -71,7 +71,7 @@ def cusparse_neumann(matA, k, v0, x, n, dtype, nnz, handle=None):
       handle: cusparse handle
     '''
     if k <= 0:
-        axpby(1.0, v0, 0.0, x)
+        kernels.axpby(1.0, v0, 0.0, x)
         return
 
     t0 = perf_counter()
@@ -86,7 +86,7 @@ def cusparse_neumann(matA, k, v0, x, n, dtype, nnz, handle=None):
 
     v_tmp = kernels.clone(v0)
     # x_0 = v0
-    axpby(1.0, v0, 0.0, x)
+    kernels.axpby(1.0, v0, 0.0, x)
 
     alpha = np.array(1.0, dtype=dtype)
     beta = np.array(1.0, dtype=dtype)
@@ -106,7 +106,7 @@ def cusparse_neumann(matA, k, v0, x, n, dtype, nnz, handle=None):
 
     for _ in range(k):
         # v_tmp = v0
-        axpby(1.0, v0, 0.0, v_tmp)
+        kernels.axpby(1.0, v0, 0.0, v_tmp)
         # v_tmp = 1.0 * A * x + 1.0 * v_tmp  =>  v_tmp = v0 + A * x
         cusparse.dnVecSetValues(matX, get_ptr(x))
         cusparse.dnVecSetValues(matV, get_ptr(v_tmp))
@@ -114,7 +114,7 @@ def cusparse_neumann(matA, k, v0, x, n, dtype, nnz, handle=None):
                       alpha.ctypes.data, matA, matX, beta.ctypes.data, matV,
                       cuda_dtype, cusparse.CUSPARSE_SPMV_ALG_DEFAULT, buf.data.ptr)
         # x = v_tmp
-        axpby(1.0, v_tmp, 0.0, x)
+        kernels.axpby(1.0, v_tmp, 0.0, x)
 
     cusparse.destroyDnVec(matX)
     cusparse.destroyDnVec(matV)
@@ -329,6 +329,13 @@ class FastTrsv:
             cusparse.destroy(self.handle)
 
     def apply(self, b, x, transpose=False):
+
+        if self.poly_k<0:
+            self.apply_by_trsv(b,x,transpose)
+        else:
+            self.apply_as_poly(b,x,transpose,self.poly_k)
+
+    def apply_by_trsv(self, b, x, transpose=False):
         '''
         Solves L x   = b (if transpose==False), or
                L^T x = b (if transpose==True) for x,
@@ -366,17 +373,11 @@ class FastTrsv:
         kernels.store['trsv'] += 8*self.shape[0]
         kernels.flop['trsv'] += 2*self.nnz
 
-    def apply_as_poly(self, b, x, k=None, transpose=False):
-        '''
+    def apply_as_poly(self, b, x, k, transpose=False):
+        r'''
         Approximate L^{-1} b or L^{-T} b using a Neumann polynomial of degree k:
         L^{-1} \approx \sum_{j=0}^k (I - D^{-1}L)^j D^{-1}
         '''
-        if k is None:
-            k = self.poly_k
-            
-        if k < 0:
-            return self.apply(b, x, transpose)
-
         if self._matL0 is None:
             raise RuntimeError("FastTrsv was not initialized for Neumann polynomial (poly_k was < 0)")
 

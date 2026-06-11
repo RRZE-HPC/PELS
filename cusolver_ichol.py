@@ -12,6 +12,8 @@ import numpy as np
 import scipy
 import cupy as cp
 from cupy.cuda import cusolver, cusparse
+from time import perf_counter
+
 import kernels
 import precon
 
@@ -20,8 +22,10 @@ class IChol:
     Incomplete Cholesky factorization (A ~= L * L^T) implemented in cuSPARSE.
     A should be a scipy.sparse.csr_matrix or cupyx.scipy.sparse.csr_matrix and should be spd.
     '''
-    def __init__(self, A):
+    def __init__(self, A, poly_k):
 
+        t0 = perf_counter()
+        self.poly_k = poly_k
         self.dtype = A.dtype
         self.shape = A.shape
         self.nnz = A.nnz
@@ -58,7 +62,7 @@ class IChol:
         # We copy A to avoid modifying the original matrix.
         self.A = A.copy()
         self.A.sort_indices()
-        
+
         # Ensure matrix is on device and get pointers
         if hasattr(self.A, 'data') and hasattr(self.A.data, 'data') and hasattr(self.A.data.data, 'ptr'):
             # Already a CuPy sparse matrix
@@ -106,13 +110,18 @@ class IChol:
 
         # 9. Perform analysis for the subsequent triangular solves
         # We let FastTrsv manage its own descriptors to avoid mixing legacy/generic APIs.
-        self.fast_trsv = precon.FastTrsv(self.A, cusparse_handle=self.handle)
+        self.fast_trsv = precon.FastTrsv(self.A, cusparse_handle=self.handle, poly_k=self.poly_k)
 
         # allocate temporary device vector for solve phase
         self.v_tmp = cp.empty(m, dtype=self.dtype)
+        t1 = perf_counter()
+        precon.calls['setup'] += 1
+        precon.time['setup'] += t1-t0
 
 
     def apply(self, b, x):
+
+        t0 = perf_counter()
         # --- Forward and Backward Solves (M * x = b) ---
 
         # Forward solve: L * v = b
@@ -120,6 +129,9 @@ class IChol:
 
         # Backward solve: L^T * x = v
         self.fast_trsv.apply(self.v_tmp, x, transpose=True)
+        t1 = perf_counter()
+        precon.calls['apply'] += 1
+        precon.time['apply'] += t1-t0
 
     def __del__(self):
         # --- Clean up ---
