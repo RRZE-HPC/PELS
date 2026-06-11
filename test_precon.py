@@ -127,3 +127,58 @@ class ICholTest(unittest.TestCase):
         # make sure all trsvs are counted
         assert(kernels.calls['trsv'] == 2)
 
+    def test_fast_trsv_poly(self):
+        '''
+        Test Neumann polynomial approximation in FastTrsv
+        '''
+        n = self.A.shape[0]
+        # We need a factor L for which the Neumann series converges.
+        # ic.L is already strictly lower triangular with positive diagonal.
+        L = self.ic.L
+        
+        # Exact solution for comparison
+        x_ex = to_device(np.random.random((n,)))
+        b = clone(x_ex)
+        spmv(L, x_ex, b)
+        
+        # 1. Initialize FastTrsv for polynomial solve
+        # Degree 10 should be quite accurate for these small Laplace matrices
+        k = 10
+        ft_poly = FastTrsv(L, poly_k=k)
+        
+        x_poly = clone(x_ex)
+        ft_poly.apply(b, x_poly, transpose=False)
+        
+        # For IC(0), Neumann series should converge towards the exact triangular solve
+        # We use a looser tolerance for the polynomial approximation
+        err_poly = diff_norm(x_poly, x_ex)
+        assert(err_poly < 1e-4)
+        
+        # 2. Test transposed polynomial solve
+        bT = to_device(from_device(L).T @ from_device(x_ex))
+        x_polyT = clone(x_ex)
+        ft_poly.apply(bT, x_polyT, transpose=True)
+        err_polyT = diff_norm(x_polyT, x_ex)
+        assert(err_polyT < 1e-4)
+
+    def test_fast_trsv_poly_fallback(self):
+        '''
+        Verify that FastTrsv.apply falls back to trsv if poly_k < 0
+        '''
+        n = self.A.shape[0]
+        L = self.ic.L
+        ft = FastTrsv(L, poly_k=-1)
+        
+        x_ex = to_device(np.random.random((n,)))
+        b = clone(x_ex)
+        spmv(L, x_ex, b)
+        
+        x_sol = clone(x_ex)
+        reset_counters()
+        ft.apply(b, x_sol, transpose=False)
+        
+        # Check that kernels.calls['trsv'] increased (via spSM solve)
+        # Note: ft.apply calls _apply_by_trsv which updates trsv counters
+        assert(kernels.calls['trsv'] > 0)
+        assert(diff_norm(x_sol, x_ex) < self.tol)
+
