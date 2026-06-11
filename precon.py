@@ -241,8 +241,8 @@ class FastTrsv:
             self._L0 = kernels.to_device(L0_cpu.tocsr())
             self._L0t = kernels.to_device(L0_cpu.T.tocsr())
 
-            self._v_poly = kernels.to_device(np.zeros(n, dtype=self.dtype))
-            self._v_poly_tmp = kernels.to_device(np.zeros(n, dtype=self.dtype))
+            self._v_poly = cp.zeros(n, dtype=self.dtype)
+            self._v_poly_tmp = cp.zeros(n, dtype=self.dtype)
 
             # Create Generic API descriptors for L0 and L0t only if they have non-zeros.
             # cuSPARSE createCsr can fail if nnz=0.
@@ -261,18 +261,18 @@ class FastTrsv:
                     self._L0t.cu_data.__cuda_array_interface__['data'][0],
                     ptr_type, idx_type, cusparse.CUSPARSE_INDEX_BASE_ZERO, self.cuda_dtype
                     )
-                
+
                 # Workspace for cusparse_neumann
                 matX_dummy = cusparse.createDnVec(n, self._v_poly.data.ptr, self.cuda_dtype)
                 matV_dummy = cusparse.createDnVec(n, self._v_poly_tmp.data.ptr, self.cuda_dtype)
-                
+
                 self._spmv_buf_size = cusparse.spMV_bufferSize(
                     self.handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
                     self.alpha.ctypes.data, self._matL0, matX_dummy, self.alpha.ctypes.data, matV_dummy,
                     self.cuda_dtype, cusparse.CUSPARSE_MV_ALG_DEFAULT)
-                
+
                 self._spmv_buf = cp.empty(self._spmv_buf_size, dtype=cp.int8)
-                
+
                 cusparse.destroyDnVec(matX_dummy)
                 cusparse.destroyDnVec(matV_dummy)
             else:
