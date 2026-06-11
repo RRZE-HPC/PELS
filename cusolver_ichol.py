@@ -95,15 +95,11 @@ class IChol:
             self.csric0_info, policy, self.pBuffer_ic.data.ptr)
 
         # Check for zero pivot
-        # The position is an int32 in the underlying C API.
-        # cuSPARSE stores the 0-based index of the first zero pivot found.
-        # If no zero pivot is found, it returns -1.
-        position = cp.zeros(1, dtype=np.int32)
-        pivot_func(self.handle, self.csric0_info, position.data.ptr)
+        # The position is an int32 in the underlying C API and it MUST be a host pointer
+        # if the handle is in the default host pointer mode.
+        position = np.zeros(1, dtype=np.int32)
+        pivot_func(self.handle, self.csric0_info, position.ctypes.data)
         
-        # Ensure we wait for the result if it was a device pointer (cp.zeros is on device)
-        # cp.zeros(..., dtype=np.int32) creates a device array. 
-        # The cuSPARSE API expects a pointer. 
         zero_pivot = int(position[0])
         if zero_pivot >= 0:
             raise RuntimeError(f"Numerical factorization failed: zero pivot found at row {zero_pivot}")

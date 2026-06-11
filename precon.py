@@ -114,18 +114,26 @@ class FastTrsv:
             raise TypeError(f"Unsupported dtype {self.dtype}. Expected float32 or float64.")
 
         # Always use a Generic API SpMatDescr for spSM
-        # If descrL is None or not a SpMatDescr, we create one.
-        # Note: CuPy doesn't easily let us check the internal type of a descriptor pointer,
-        # so we rely on the logic that IChol (legacy) passes a legacy descriptor.
         # To be safe, we always create our own SpMatDescr from L.
         self.L_cp = as_cupy(L)
         self.L_cp.sort_indices()
+
+        # Determine index dtypes (32 vs 64 bit)
+        if self.L_cp.indptr.dtype == np.int32:
+            ptr_type = cusparse.CUSPARSE_INDEX_32I
+        else:
+            ptr_type = cusparse.CUSPARSE_INDEX_64I
+
+        if self.L_cp.indices.dtype == np.int32:
+            idx_type = cusparse.CUSPARSE_INDEX_32I
+        else:
+            idx_type = cusparse.CUSPARSE_INDEX_64I
 
         # Create Sparse Matrix Descriptor for L
         self.matA = cusparse.createCsr(
             n, n, nnz,
             self.L_cp.indptr.data.ptr, self.L_cp.indices.data.ptr, self.L_cp.data.data.ptr,
-            cusparse.CUSPARSE_INDEX_32I, cusparse.CUSPARSE_INDEX_32I,
+            ptr_type, idx_type,
             cusparse.CUSPARSE_INDEX_BASE_ZERO, self.cuda_dtype
             )
         self.own_matA = True
@@ -137,13 +145,13 @@ class FastTrsv:
         cusparse.spMatSetAttribute(self.matA, cusparse.CUSPARSE_SPMAT_DIAG_TYPE, diag_type)
 
         # Create Dense Matrix Descriptors for B and X
-        # Note: SpSM expects row-major or column-major layouts specified explicitly
-        # We keep these descriptors alive as required by the Generic API.
-        x_cp = cp.zeros((n,), dtype=self.dtype)
-        b_cp = cp.zeros((n,), dtype=self.dtype)
-        self.matX = cusparse.createDnMat(n, 1, n, x_cp.data.ptr, self.cuda_dtype,
+        # We MUST keep the dummy vectors alive because the descriptors (and analysis)
+        # may depend on them until they are updated in 'apply'.
+        self._x_dummy = cp.zeros((n,), dtype=self.dtype)
+        self._b_dummy = cp.zeros((n,), dtype=self.dtype)
+        self.matX = cusparse.createDnMat(n, 1, n, self._x_dummy.data.ptr, self.cuda_dtype,
                                          cusparse.CUSPARSE_ORDER_COL)
-        self.matB = cusparse.createDnMat(n, 1, n, b_cp.data.ptr, self.cuda_dtype,
+        self.matB = cusparse.createDnMat(n, 1, n, self._b_dummy.data.ptr, self.cuda_dtype,
                                          cusparse.CUSPARSE_ORDER_COL)
 
         # Create an opaque SpSM descriptor to hold the cached analysis phase data
