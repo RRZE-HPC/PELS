@@ -95,24 +95,40 @@ class FastTrsv:
         nnz = L.nnz
         self.shape = L.shape
         self.nnz   = L.nnz
+        self.dtype = L.dtype
+        self.own_handle = False
+        self.own_matA = False
+
         if cusparse_handle is None:
             self.handle = cusparse.create()
+            self.own_handle = True
         else:
             self.handle = cusparse_handle
 
-        if descrL is None:
-            self.L_cp = as_cupy(L)
-            self.L_cp.sort_indices()
-
-            # Create Sparse Matrix Descriptor for L
-            self.matA = cusparse.createCsr(
-                n, n, nnz,
-                self.L_cp.indptr.data.ptr, self.L_cp.indices.data.ptr, self.L_cp.data.data.ptr,
-                cusparse.CUSPARSE_INDEX_32I, cusparse.CUSPARSE_INDEX_32I,
-                cusparse.CUSPARSE_INDEX_BASE_ZERO, cp.cuda.runtime.CUDA_R_64F
-                )
+        # Determine CUDA data type from L.dtype
+        if self.dtype == np.float32:
+            self.cuda_dtype = cp.cuda.runtime.CUDA_R_32F
+        elif self.dtype == np.float64:
+            self.cuda_dtype = cp.cuda.runtime.CUDA_R_64F
         else:
-            self.matA = descrL
+            raise TypeError(f"Unsupported dtype {self.dtype}. Expected float32 or float64.")
+
+        # Always use a Generic API SpMatDescr for spSM
+        # If descrL is None or not a SpMatDescr, we create one.
+        # Note: CuPy doesn't easily let us check the internal type of a descriptor pointer,
+        # so we rely on the logic that IChol (legacy) passes a legacy descriptor.
+        # To be safe, we always create our own SpMatDescr from L.
+        self.L_cp = as_cupy(L)
+        self.L_cp.sort_indices()
+
+        # Create Sparse Matrix Descriptor for L
+        self.matA = cusparse.createCsr(
+            n, n, nnz,
+            self.L_cp.indptr.data.ptr, self.L_cp.indices.data.ptr, self.L_cp.data.data.ptr,
+            cusparse.CUSPARSE_INDEX_32I, cusparse.CUSPARSE_INDEX_32I,
+            cusparse.CUSPARSE_INDEX_BASE_ZERO, self.cuda_dtype
+            )
+        self.own_matA = True
 
         # Specify that A is Lower-Triangular and Non-Unit diagonal
         fill_mode = np.array(cusparse.CUSPARSE_FILL_MODE_LOWER, dtype=np.int32)
@@ -123,11 +139,11 @@ class FastTrsv:
         # Create Dense Matrix Descriptors for B and X
         # Note: SpSM expects row-major or column-major layouts specified explicitly
         # We keep these descriptors alive as required by the Generic API.
-        x_cp = cp.zeros((n,), dtype=cp.float64)
-        b_cp = cp.zeros((n,), dtype=cp.float64)
-        self.matX = cusparse.createDnMat(n, 1, n, x_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F,
+        x_cp = cp.zeros((n,), dtype=self.dtype)
+        b_cp = cp.zeros((n,), dtype=self.dtype)
+        self.matX = cusparse.createDnMat(n, 1, n, x_cp.data.ptr, self.cuda_dtype,
                                          cusparse.CUSPARSE_ORDER_COL)
-        self.matB = cusparse.createDnMat(n, 1, n, b_cp.data.ptr, cp.cuda.runtime.CUDA_R_64F,
+        self.matB = cusparse.createDnMat(n, 1, n, b_cp.data.ptr, self.cuda_dtype,
                                          cusparse.CUSPARSE_ORDER_COL)
 
         # Create an opaque SpSM descriptor to hold the cached analysis phase data
@@ -135,7 +151,7 @@ class FastTrsv:
         # and another for the transposed operation, x = L^{-T}b
         self.spsmDescrT = cusparse.spSM_createDescr()
 
-        self.alpha = np.array(1.0, dtype='float64')
+        self.alpha = np.array(1.0, dtype=self.dtype)
 
         ##########################################################
         # Analysis Phase -- run for standard and transposed case #
@@ -146,13 +162,13 @@ class FastTrsv:
                 self.handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
                 cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
                 alpha=self.alpha.ctypes.data, matA=self.matA, matB=self.matB, matC=self.matX,
-                computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
+                computeType=self.cuda_dtype, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
                 spsmDescr=self.spsmDescr)
         bufferSizeT = cusparse.spSM_bufferSize(
                 self.handle, cusparse.CUSPARSE_OPERATION_TRANSPOSE,
                 cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
                 alpha=self.alpha.ctypes.data, matA=self.matA, matB=self.matB, matC=self.matX,
-                computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
+                computeType=self.cuda_dtype, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
                 spsmDescr=self.spsmDescrT)
 
         # The externalBuffer must be preserved and remain unmodified between the analysis and solve
@@ -165,23 +181,29 @@ class FastTrsv:
             self.handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
             cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
             alpha=self.alpha.ctypes.data, matA=self.matA, matB=self.matB, matC=self.matX,
-            computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
+            computeType=self.cuda_dtype, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
             spsmDescr=self.spsmDescr, externalBuffer=self.buffer.data.ptr)
 
         cusparse.spSM_analysis(
             self.handle, cusparse.CUSPARSE_OPERATION_TRANSPOSE,
             cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
             alpha=self.alpha.ctypes.data, matA=self.matA, matB=self.matB, matC=self.matX,
-            computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
+            computeType=self.cuda_dtype, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
             spsmDescr=self.spsmDescrT, externalBuffer=self.bufferT.data.ptr)
 
     def __del__(self):
-        cusparse.spSM_destroyDescr(self.spsmDescr)
-        cusparse.spSM_destroyDescr(self.spsmDescrT)
-        cusparse.destroyDnMat(self.matB)
-        cusparse.destroyDnMat(self.matX)
-        cusparse.destroySpMat(self.matA)
-        cusparse.destroy(self.handle)
+        if hasattr(self, 'spsmDescr'):
+            cusparse.spSM_destroyDescr(self.spsmDescr)
+        if hasattr(self, 'spsmDescrT'):
+            cusparse.spSM_destroyDescr(self.spsmDescrT)
+        if hasattr(self, 'matB'):
+            cusparse.destroyDnMat(self.matB)
+        if hasattr(self, 'matX'):
+            cusparse.destroyDnMat(self.matX)
+        if hasattr(self, 'own_matA') and self.own_matA:
+            cusparse.destroySpMat(self.matA)
+        if hasattr(self, 'own_handle') and self.own_handle:
+            cusparse.destroy(self.handle)
 
     def apply(self, b, x, transpose=False):
         '''
@@ -210,7 +232,7 @@ class FastTrsv:
         cusparse.spSM_solve(
                 self.handle, cp_transpose, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
                 alpha=self.alpha.ctypes.data, matA=self.matA, matB=self.matB, matC=self.matX,
-                computeType=cp.cuda.runtime.CUDA_R_64F, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
+                computeType=self.cuda_dtype, alg=cusparse.CUSPARSE_SPSM_ALG_DEFAULT,
                 spsmDescr=spsmDescr, externalBuffer=buffer_ptr)
 
         cuda.synchronize()

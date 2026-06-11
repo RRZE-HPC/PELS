@@ -10,85 +10,106 @@
 
 import numpy as np
 import scipy
-import cupy
+import cupy as cp
 from cupy.cuda import cusolver, cusparse
 import kernels
 import precon
 
 class IChol:
-    """
-    Incomplete Cholesky factorization (A ~= L * L^T) implemented in CuSolver.
-    A should be a cupyx.scipy.sparse.csr_matrix and should be spd.
-    """
+    '''
+    Incomplete Cholesky factorization (A ~= L * L^T) implemented in cuSPARSE.
+    A should be a scipy.sparse.csr_matrix or cupyx.scipy.sparse.csr_matrix and should be spd.
+    '''
     def __init__(self, A):
 
-        self.A = A
         self.dtype = A.dtype
         self.shape = A.shape
         self.nnz = A.nnz
-
-        # Extract structural dimensions
         m = A.shape[0]
         nnz = A.nnz
 
-        # 1. Grab handles from current CuPy context
+        # 1. Select precision-specific functions
+        if self.dtype == np.float32:
+            bufferSize_func = cusparse.scsric02_bufferSize
+            analysis_func   = cusparse.scsric02_analysis
+            factor_func     = cusparse.scsric02
+            pivot_func      = cusparse.scsric02_zeroPivot
+        elif self.dtype == np.float64:
+            bufferSize_func = cusparse.dcsric02_bufferSize
+            analysis_func   = cusparse.dcsric02_analysis
+            factor_func     = cusparse.dcsric02
+            pivot_func      = cusparse.dcsric02_zeroPivot
+        else:
+            raise TypeError(f"Unsupported dtype {self.dtype}. Expected float32 or float64.")
+
+        # 2. Grab handle from current CuPy context
         self.handle = cusparse.create()
 
-        # 2. Setup Sparse Matrix Descriptor (We look at the Lower triangular part)
+        # 3. Setup Legacy Sparse Matrix Descriptor
         self.mat_descr = cusparse.createMatDescr()
         cusparse.setMatType(self.mat_descr, cusparse.CUSPARSE_MATRIX_TYPE_GENERAL)
         cusparse.setMatIndexBase(self.mat_descr, cusparse.CUSPARSE_INDEX_BASE_ZERO)
+        cusparse.setMatFillMode(self.mat_descr, cusparse.CUSPARSE_FILL_MODE_LOWER)
 
-        # 3. Create Info structures for Factorization (ic0) and Solve (sv2)
-        # We use single-precision or double-precision specific binding hooks
+        # 4. Create Info structure for Factorization
         self.csric0_info = cusparse.createCsric02Info()
 
-        # Work arrays from the CSR matrix
-        # NOTE: csric02 performs the calculation IN-PLACE, so we copy values
+        # 5. Prepare work arrays (IN-PLACE factorization)
+        # We copy A to avoid modifying the original matrix.
         self.A = A.copy()
         self.A.sort_indices()
-        self.A = kernels.to_device(self.A)
-        self.d_val_ptr = self.A.cu_data.__cuda_array_interface__['data'][0]
-        self.d_indptr_ptr = self.A.cu_indptr.__cuda_array_interface__['data'][0]
-        self.d_indices_ptr = self.A.cu_indices.__cuda_array_interface__['data'][0]
+        
+        # Ensure matrix is on device and get pointers
+        if hasattr(self.A, 'data') and hasattr(self.A.data, 'data') and hasattr(self.A.data.data, 'ptr'):
+            # Already a CuPy sparse matrix
+            self.d_val_ptr = self.A.data.data.ptr
+            self.d_indptr_ptr = self.A.indptr.data.ptr
+            self.d_indices_ptr = self.A.indices.data.ptr
+        else:
+            # Fallback to kernels.to_device (attaches Numba device arrays)
+            self.A = kernels.to_device(self.A)
+            self.d_val_ptr = self.A.cu_data.__cuda_array_interface__['data'][0]
+            self.d_indptr_ptr = self.A.cu_indptr.__cuda_array_interface__['data'][0]
+            self.d_indices_ptr = self.A.cu_indices.__cuda_array_interface__['data'][0]
 
-        # Memory Buffer Allocation ---
-        # Determine the internal workspace required by cuSPARSE for IC and solving
-        # (Using float64 / D variant hooks)
-
-        # Factorization buffer
-        buf_size_ic = cusparse.dcsric02_bufferSize(
+        # 6. Memory Buffer Allocation
+        buf_size_ic = bufferSize_func(
                 self.handle, m, nnz, self.mat_descr,
                 self.d_val_ptr, self.d_indptr_ptr, self.d_indices_ptr,
                 self.csric0_info)
 
+        self.pBuffer_ic = cp.empty(buf_size_ic, dtype=cp.int8)
 
-        self.pBuffer_ic    = cupy.empty(buf_size_ic, dtype=cupy.int8)
-
-        # Analysis phase ---
+        # 7. Analysis phase
         policy = cusparse.CUSPARSE_SOLVE_POLICY_USE_LEVEL
-        cusparse.dcsric02_analysis(
+        analysis_func(
             self.handle, m, nnz, self.mat_descr,
             self.d_val_ptr, self.d_indptr_ptr, self.d_indices_ptr,
             self.csric0_info, policy, self.pBuffer_ic.data.ptr)
 
-        # Numerical factorization
-        # This alters `self.d_val` in place. After execution, self.d_val holds the L factor elements.
-        cusparse.dcsric02(
+        # 8. Numerical factorization
+        # This alters `self.A` data in place.
+        factor_func(
             self.handle, m, nnz, self.mat_descr,
             self.d_val_ptr, self.d_indptr_ptr, self.d_indices_ptr,
             self.csric0_info, policy, self.pBuffer_ic.data.ptr)
 
-        # Perform analysis for the subsequent triangular solves
-        # Note that the A matrix we pass in is only used to get the shape and non-zero count,
-        # the actual solve is done with the matrix descriptor, which holds the entries of L, not A.
-        self.fast_trsv = precon.FastTrsv(self.A, cusparse_handle=self.handle, descrL=self.mat_descr)
+        # Check for zero pivot
+        # pivot_func returns the index (1-based or -1 if none? Actually cuSPARSE returns it via info)
+        # In CuPy, dcsric02_zeroPivot(handle, info) returns the pivot.
+        zero_pivot = pivot_func(self.handle, self.csric0_info)
+        if zero_pivot >= 0:
+            raise RuntimeError(f"Numerical factorization failed: zero pivot found at row {zero_pivot}")
+
+        # 9. Perform analysis for the subsequent triangular solves
+        # We let FastTrsv manage its own descriptors to avoid mixing legacy/generic APIs.
+        self.fast_trsv = precon.FastTrsv(self.A, cusparse_handle=self.handle)
 
         # allocate temporary device vector for solve phase
-        self.v_tmp = cupy.empty(m, dtype=cupy.float64)
+        self.v_tmp = cp.empty(m, dtype=self.dtype)
 
 
-    def apply(self, b,  x):
+    def apply(self, b, x):
         # --- Forward and Backward Solves (M * x = b) ---
 
         # Forward solve: L * v = b
@@ -99,6 +120,11 @@ class IChol:
 
     def __del__(self):
         # --- Clean up ---
-        cusparse.destroyCsric02Info(self.csric0_info)
-        self.fast_trsv = None
+        if hasattr(self, 'csric0_info'):
+            cusparse.destroyCsric02Info(self.csric0_info)
+        if hasattr(self, 'mat_descr'):
+            cusparse.destroyMatDescr(self.mat_descr)
+        self.fast_trsv = None # FastTrsv handles its own cleanup
+        if hasattr(self, 'handle'):
+            cusparse.destroy(self.handle)
 
