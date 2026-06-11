@@ -101,7 +101,7 @@ def cusparse_neumann(matA, k, v0, x, n, dtype, nnz, handle=None):
 
     bufSize = cusparse.spMV_bufferSize(handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
                                        alpha.ctypes.data, matA, matX, beta.ctypes.data, matV,
-                                       cuda_dtype, cusparse.CUSPARSE_SPMV_ALG_DEFAULT)
+                                       cuda_dtype, cusparse.CUSPARSE_MV_ALG_DEFAULT)
     buf = cp.empty(bufSize, dtype=cp.int8)
 
     for _ in range(k):
@@ -112,7 +112,7 @@ def cusparse_neumann(matA, k, v0, x, n, dtype, nnz, handle=None):
         cusparse.dnVecSetValues(matV, get_ptr(v_tmp))
         cusparse.spMV(handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
                       alpha.ctypes.data, matA, matX, beta.ctypes.data, matV,
-                      cuda_dtype, cusparse.CUSPARSE_SPMV_ALG_DEFAULT, buf.data.ptr)
+                      cuda_dtype, cusparse.CUSPARSE_MV_ALG_DEFAULT, buf.data.ptr)
         # x = v_tmp
         kernels.axpby(1.0, v_tmp, 0.0, x)
 
