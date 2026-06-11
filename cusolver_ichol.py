@@ -95,9 +95,16 @@ class IChol:
             self.csric0_info, policy, self.pBuffer_ic.data.ptr)
 
         # Check for zero pivot
-        # pivot_func returns the index (1-based or -1 if none? Actually cuSPARSE returns it via info)
-        # In CuPy, dcsric02_zeroPivot(handle, info) returns the pivot.
-        zero_pivot = pivot_func(self.handle, self.csric0_info)
+        # The position is an int32 in the underlying C API.
+        # cuSPARSE stores the 0-based index of the first zero pivot found.
+        # If no zero pivot is found, it returns -1.
+        position = cp.zeros(1, dtype=np.int32)
+        pivot_func(self.handle, self.csric0_info, position.data.ptr)
+        
+        # Ensure we wait for the result if it was a device pointer (cp.zeros is on device)
+        # cp.zeros(..., dtype=np.int32) creates a device array. 
+        # The cuSPARSE API expects a pointer. 
+        zero_pivot = int(position[0])
         if zero_pivot >= 0:
             raise RuntimeError(f"Numerical factorization failed: zero pivot found at row {zero_pivot}")
 
