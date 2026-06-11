@@ -38,7 +38,7 @@ class IChol:
             bufferSize_func = cusparse.dcsric02_bufferSize
             analysis_func   = cusparse.dcsric02_analysis
             factor_func     = cusparse.dcsric02
-            pivot_func      = cusparse.dcsric02_zeroPivot
+            pivot_func      = cusparse.xcsric02_zeroPivot
         else:
             raise TypeError(f"Unsupported dtype {self.dtype}. Expected float32 or float64.")
 
