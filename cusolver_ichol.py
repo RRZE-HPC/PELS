@@ -124,14 +124,16 @@ class IChol:
         t0 = perf_counter()
         # --- Forward and Backward Solves (M * x = b) ---
 
+        # Exact or approximate (polynomial) solves
         # Forward solve: L * v = b
         self.fast_trsv.apply(b, self.v_tmp, transpose=False)
-
         # Backward solve: L^T * x = v
         self.fast_trsv.apply(self.v_tmp, x, transpose=True)
+
         t1 = perf_counter()
         precon.calls['apply'] += 1
-        precon.time['apply'] += t1-t0
+        time_apply = t1-t0
+        precon.time['apply'] += time_apply
 
     def __del__(self):
         # --- Clean up ---

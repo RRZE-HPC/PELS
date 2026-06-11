@@ -52,8 +52,8 @@ def neumann(A0, k, v0, x):
         # swap the vectors
         A0v, v = v, A0v
 
-def cusparse_neumann(matA, k, v0, x, n, dtype, nnz, handle=None):
-    '''
+def cusparse_neumann(matA, k, v0, x, n, dtype, nnz, handle, v_tmp, buf):
+    r'''
     Apply degree-k Neumann polynomial in matrix M = (I-A) using cuSPARSE SpMV:
     x = M^{-1} v0 = (I-A)^{-1} v0 \approx \sum_{j=0}^k (A^j v0)
 
@@ -69,22 +69,15 @@ def cusparse_neumann(matA, k, v0, x, n, dtype, nnz, handle=None):
       dtype: numpy dtype (float32/float64)
       nnz: number of non-zeros in A
       handle: cusparse handle
+      v_tmp: workspace vector (same size as x)
+      buf: pre-allocated cuSPARSE SpMV buffer
     '''
     if k <= 0:
         kernels.axpby(1.0, v0, 0.0, x)
         return
 
-    t0 = perf_counter()
-
-    if handle is None:
-        handle = cusparse.create()
-        own_handle = True
-    else:
-        own_handle = False
-
     cuda_dtype = cp.cuda.runtime.CUDA_R_64F if dtype == np.float64 else cp.cuda.runtime.CUDA_R_32F
 
-    v_tmp = kernels.clone(v0)
     # x_0 = v0
     kernels.axpby(1.0, v0, 0.0, x)
 
@@ -98,11 +91,6 @@ def cusparse_neumann(matA, k, v0, x, n, dtype, nnz, handle=None):
 
     matX = cusparse.createDnVec(n, get_ptr(x), cuda_dtype)
     matV = cusparse.createDnVec(n, get_ptr(v_tmp), cuda_dtype)
-
-    bufSize = cusparse.spMV_bufferSize(handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                       alpha.ctypes.data, matA, matX, beta.ctypes.data, matV,
-                                       cuda_dtype, cusparse.CUSPARSE_MV_ALG_DEFAULT)
-    buf = cp.empty(bufSize, dtype=cp.int8)
 
     for _ in range(k):
         # v_tmp = v0
@@ -118,15 +106,9 @@ def cusparse_neumann(matA, k, v0, x, n, dtype, nnz, handle=None):
 
     cusparse.destroyDnVec(matX)
     cusparse.destroyDnVec(matV)
-    if own_handle:
-        cusparse.destroy(handle)
-
-    t1 = perf_counter()
-    if 'spmv' in kernels.time:
-        kernels.time['spmv']  += t1-t0
-        kernels.calls['spmv'] += k
 
 def apply_metis_preordering(A, x_ex, b):
+
     '''
     Given a linear system A x_ex = b, where x_ex is the exact solution,
     returns A_p, x_ex_p, b_p s.t. A_p x_ex_p = b_p, and the '_p' matrices
@@ -244,33 +226,58 @@ class FastTrsv:
         self._matL0t = None
         if self.poly_k >= 0:
             # Extract diagonal and normalize: L = D(I - L0)
-            L_cpu = self.L_cp.get()
+            # IMPORTANT: We must extract only the LOWER triangular part of L_cp.
+            # Some factorizations (like CuSolver IC0) are in-place and leave
+            # the upper part of the original matrix untouched.
+            L_cpu = scipy.sparse.tril(self.L_cp.get()).tocsr()
             d = L_cpu.diagonal()
             self._d_inv = kernels.to_device(1.0 / d)
-            
+
             # L0 = (D - L) @ D^{-1}
+            # This is strictly lower triangular, eigenvalues are zero,
+            # so the Neumann series always converges.
             D = scipy.sparse.diags(d)
             L0_cpu = (D - L_cpu) @ scipy.sparse.diags(1.0/d)
             self._L0 = kernels.to_device(L0_cpu.tocsr())
             self._L0t = kernels.to_device(L0_cpu.T.tocsr())
-            
-            self._v_poly = kernels.to_device(np.zeros(n, dtype=self.dtype))
 
-            # Create Generic API descriptors for L0 and L0t
-            self._matL0 = cusparse.createCsr(
-                n, n, self._L0.nnz,
-                self._L0.cu_indptr.__cuda_array_interface__['data'][0],
-                self._L0.cu_indices.__cuda_array_interface__['data'][0],
-                self._L0.cu_data.__cuda_array_interface__['data'][0],
-                ptr_type, idx_type, cusparse.CUSPARSE_INDEX_BASE_ZERO, self.cuda_dtype
-                )
-            self._matL0t = cusparse.createCsr(
-                n, n, self._L0t.nnz,
-                self._L0t.cu_indptr.__cuda_array_interface__['data'][0],
-                self._L0t.cu_indices.__cuda_array_interface__['data'][0],
-                self._L0t.cu_data.__cuda_array_interface__['data'][0],
-                ptr_type, idx_type, cusparse.CUSPARSE_INDEX_BASE_ZERO, self.cuda_dtype
-                )
+            self._v_poly = kernels.to_device(np.zeros(n, dtype=self.dtype))
+            self._v_poly_tmp = kernels.to_device(np.zeros(n, dtype=self.dtype))
+
+            # Create Generic API descriptors for L0 and L0t only if they have non-zeros.
+            # cuSPARSE createCsr can fail if nnz=0.
+            if self._L0.nnz > 0:
+                self._matL0 = cusparse.createCsr(
+                    n, n, self._L0.nnz,
+                    self._L0.cu_indptr.__cuda_array_interface__['data'][0],
+                    self._L0.cu_indices.__cuda_array_interface__['data'][0],
+                    self._L0.cu_data.__cuda_array_interface__['data'][0],
+                    ptr_type, idx_type, cusparse.CUSPARSE_INDEX_32I, self.cuda_dtype
+                    )
+                self._matL0t = cusparse.createCsr(
+                    n, n, self._L0t.nnz,
+                    self._L0t.cu_indptr.__cuda_array_interface__['data'][0],
+                    self._L0t.cu_indices.__cuda_array_interface__['data'][0],
+                    self._L0t.cu_data.__cuda_array_interface__['data'][0],
+                    ptr_type, idx_type, cusparse.CUSPARSE_INDEX_32I, self.cuda_dtype
+                    )
+                
+                # Workspace for cusparse_neumann
+                matX_dummy = cusparse.createDnVec(n, self._v_poly.data.ptr, self.cuda_dtype)
+                matV_dummy = cusparse.createDnVec(n, self._v_poly_tmp.data.ptr, self.cuda_dtype)
+                
+                self._spmv_buf_size = cusparse.spMV_bufferSize(
+                    self.handle, cusparse.CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    self.alpha.ctypes.data, self._matL0, matX_dummy, self.alpha.ctypes.data, matV_dummy,
+                    self.cuda_dtype, cusparse.CUSPARSE_MV_ALG_DEFAULT)
+                
+                self._spmv_buf = cp.empty(self._spmv_buf_size, dtype=cp.int8)
+                
+                cusparse.destroyDnVec(matX_dummy)
+                cusparse.destroyDnVec(matV_dummy)
+            else:
+                self._matL0 = None
+                self._matL0t = None
 
         ##########################################################
         # Analysis Phase -- run for standard and transposed case #
@@ -331,11 +338,11 @@ class FastTrsv:
     def apply(self, b, x, transpose=False):
 
         if self.poly_k<0:
-            self.apply_by_trsv(b,x,transpose)
+            self._apply_by_trsv(b,x,transpose)
         else:
-            self.apply_as_poly(b,x,transpose,self.poly_k)
+            self._apply_as_poly(b,x,transpose,self.poly_k)
 
-    def apply_by_trsv(self, b, x, transpose=False):
+    def _apply_by_trsv(self, b, x, transpose=False):
         '''
         Solves L x   = b (if transpose==False), or
                L^T x = b (if transpose==True) for x,
@@ -373,23 +380,39 @@ class FastTrsv:
         kernels.store['trsv'] += 8*self.shape[0]
         kernels.flop['trsv'] += 2*self.nnz
 
-    def apply_as_poly(self, b, x, k, transpose=False):
+    def _apply_as_poly(self, b, x, k=None, transpose=False):
         r'''
         Approximate L^{-1} b or L^{-T} b using a Neumann polynomial of degree k:
         L^{-1} \approx \sum_{j=0}^k (I - D^{-1}L)^j D^{-1}
         '''
+        if k is None:
+            k = self.poly_k
+        if k < 0:
+            return self.apply(b, x, transpose)
         if self._matL0 is None:
             raise RuntimeError("FastTrsv was not initialized for Neumann polynomial (poly_k was < 0)")
 
         n = self.shape[0]
         if transpose:
-            # x = (I - L0t)^{-1} D^{-1} b
-            kernels.vscale(self._d_inv, b, self._v_poly)
-            cusparse_neumann(self._matL0t, k, self._v_poly, x, n, self.dtype, self._L0t.nnz, self.handle)
-        else:
-            # x = D^{-1} (I - L0)^{-1} b
-            cusparse_neumann(self._matL0, k, b, self._v_poly, n, self.dtype, self._L0.nnz, self.handle)
+            # Backward solve: L^{-T} = D^{-1} (I - L0t)^{-1}
+            # 1. v_poly = (I - L0t)^{-1} b
+            if self._matL0t is not None:
+                cusparse_neumann(self._matL0t, k, b, self._v_poly, n, self.dtype, self._L0t.nnz, self.handle, self._v_poly_tmp, self._spmv_buf)
+            else:
+                # L0 is empty, (I-0)^-1 = I
+                kernels.axpby(1.0, b, 0.0, self._v_poly)
+            # 2. x = D^{-1} v_poly
             kernels.vscale(self._d_inv, self._v_poly, x)
+        else:
+            # Forward solve: L^{-1} = (I - L0)^{-1} D^{-1}
+            # 1. v_poly = D^{-1} b
+            kernels.vscale(self._d_inv, b, self._v_poly)
+            # 2. x = (I - L0)^{-1} v_poly
+            if self._matL0 is not None:
+                cusparse_neumann(self._matL0, k, self._v_poly, x, n, self.dtype, self._L0.nnz, self.handle, self._v_poly_tmp, self._spmv_buf)
+            else:
+                # L0 is empty, (I-0)^-1 = I
+                kernels.axpby(1.0, self._v_poly, 0.0, x)
 
 ###################
 # Preconditioners #
