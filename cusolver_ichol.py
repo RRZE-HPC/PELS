@@ -22,7 +22,7 @@ class IChol:
     Incomplete Cholesky factorization (A ~= L * L^T) implemented in cuSPARSE.
     A should be a scipy.sparse.csr_matrix or cupyx.scipy.sparse.csr_matrix and should be spd.
     '''
-    def __init__(self, A, poly_k):
+    def __init__(self, A, poly_k=-1):
 
         t0 = perf_counter()
         self.poly_k = poly_k

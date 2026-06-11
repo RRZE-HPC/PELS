@@ -252,14 +252,14 @@ class FastTrsv:
                     self._L0.cu_indptr.__cuda_array_interface__['data'][0],
                     self._L0.cu_indices.__cuda_array_interface__['data'][0],
                     self._L0.cu_data.__cuda_array_interface__['data'][0],
-                    ptr_type, idx_type, cusparse.CUSPARSE_INDEX_32I, self.cuda_dtype
+                    ptr_type, idx_type, cusparse.CUSPARSE_INDEX_BASE_ZERO, self.cuda_dtype
                     )
                 self._matL0t = cusparse.createCsr(
                     n, n, self._L0t.nnz,
                     self._L0t.cu_indptr.__cuda_array_interface__['data'][0],
                     self._L0t.cu_indices.__cuda_array_interface__['data'][0],
                     self._L0t.cu_data.__cuda_array_interface__['data'][0],
-                    ptr_type, idx_type, cusparse.CUSPARSE_INDEX_32I, self.cuda_dtype
+                    ptr_type, idx_type, cusparse.CUSPARSE_INDEX_BASE_ZERO, self.cuda_dtype
                     )
                 
                 # Workspace for cusparse_neumann
@@ -338,9 +338,9 @@ class FastTrsv:
     def apply(self, b, x, transpose=False):
 
         if self.poly_k<0:
-            self._apply_by_trsv(b,x,transpose)
+            self._apply_by_trsv(b, x, transpose)
         else:
-            self._apply_as_poly(b,x,transpose,self.poly_k)
+            self._apply_as_poly(b, x, k=self.poly_k, transpose=transpose)
 
     def _apply_by_trsv(self, b, x, transpose=False):
         '''
@@ -388,7 +388,7 @@ class FastTrsv:
         if k is None:
             k = self.poly_k
         if k < 0:
-            return self.apply(b, x, transpose)
+            return self._apply_by_trsv(b, x, transpose)
         if self._matL0 is None:
             raise RuntimeError("FastTrsv was not initialized for Neumann polynomial (poly_k was < 0)")
 
