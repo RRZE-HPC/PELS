@@ -114,6 +114,7 @@ def cg_solve(A, M, b, x0, tol, maxit, verbose=True, x_ex=None):
 import numba
 from numpy.linalg import norm
 from sellcs import sellcs_matrix
+import cusolver_ichol
 
 import precon
 
@@ -203,8 +204,19 @@ def pcg_demo(args_dict={}):
             M = precon.Jacobi(A_csr)
         elif args.precon == 'SGS':
             M = precon.SymmetricGaussSeidel(A_csr, fast_trsv=args.fast_trsv)
-        elif args.precon == 'IC':
-            M = precon.IChol(A_csr, args.ic_fill, args.ic_droptol, poly_k=args.ic_poly, fast_trsv=args.fast_trsv)
+        elif args.precon.startswith('IC'):
+            if args.precon.endswith('p'):
+                # First apply a fill-reducing ordering to the linear system
+                # -- otherwise the performance is horrible.
+                A_csr, x_ex, b = precon.apply_metis_preordering(A_csr, from_device(x_ex), from_device(b))
+                A_csr    = to_device(A_csr)
+                A = A_csr
+                x_ex = to_device(x_ex)
+                b    = to_device(b)
+            if args.precon.startswith('IC0'):
+                M = cusolver_ichol.IChol(A_csr)
+            else:
+                M = precon.IChol(A_csr, args.ic_fill, args.ic_droptol, poly_k=args.ic_poly, fast_trsv=args.fast_trsv)
         else:
             raise Exception("Unsupported parameter: -precon='"+args.precon+"'")
         if args.fmt == 'SELL' and A.sigma!=1:

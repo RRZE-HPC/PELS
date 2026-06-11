@@ -16,6 +16,7 @@ from time import perf_counter
 import cupy as cp
 from cupy.cuda import cusolver, cusparse
 from cupyx.scipy.sparse.linalg import spilu as cupy_spilu
+import pymetis
 
 import kernels
 from cuda_precon import *
@@ -51,27 +52,67 @@ def neumann(A0, k, v0, x):
         # swap the vectors
         A0v, v = v, A0v
 
+def apply_metis_preordering(A, x_ex, b):
+    '''
+    Given a linear system A x_ex = b, where x_ex is the exact solution,
+    returns A_p, x_ex_p, b_p s.t. A_p x_ex_p = b_p, and the '_p' matrices
+    /vectors are consistent permutations of there input counterparts.
+    A_p retains symmetry and should have a more favorable pattern for subsequent
+    (incomplete) factorization, as with IChol.
+    '''
+    # Compute Nested Dissection permutation using PyMetis
+    # Metis expects a graph WITHOUT self-loops (diagonal entries).
+    n = A.shape[0]
+    adjacency = [
+             [j for j in A.indices[A.indptr[i] : A.indptr[i+1]] if j != i]
+                for i in range(n)
+            ]
+
+    # iperm[i] is the vertex at position i of the new ordering.
+    _, p = pymetis.nested_dissection(adjacency)
+    p = np.array(p, dtype=int)
+
+    # Pre-permute the matrix A_p = A[p, p]
+    A_p    = A[p, :][:, p]
+    x_ex_p = x_ex[p]
+    b_p    = b[p]
+    return A_p, x_ex_p, b_p
+
+
+
+
+
+
 class FastTrsv:
 
-    def __init__(self, L):
+    def __init__(self, L, cusparse_handle=None, descrL=None):
         '''
         Run analysis to optimize triangular solves (pass the output to cp_trsv)
+        If you already have a cusparse handle and/or matrix descriptor (e.g. from the factorization phase),
+        you can pass them in here to avoid duplicate work.
         '''
         n = L.shape[0]
         nnz = L.nnz
         self.shape = L.shape
         self.nnz   = L.nnz
-        self.L_cp = as_cupy(L)
-        self.L_cp.sort_indices()
+        if cusparse_handle is None:
+            self.handle = cusparse.create()
+        else:
+            self.handle = cusparse_handle
 
-        # Create Sparse Matrix Descriptor for L
-        self.handle = cusparse.create()
-        self.matA = cusparse.createCsr(
+        if descrL is None:
+            self.L_cp = as_cupy(L)
+            self.L_cp.sort_indices()
+
+            # Create Sparse Matrix Descriptor for L
+            self.matA = cusparse.createCsr(
                 n, n, nnz,
                 self.L_cp.indptr.data.ptr, self.L_cp.indices.data.ptr, self.L_cp.data.data.ptr,
                 cusparse.CUSPARSE_INDEX_32I, cusparse.CUSPARSE_INDEX_32I,
                 cusparse.CUSPARSE_INDEX_BASE_ZERO, cp.cuda.runtime.CUDA_R_64F
                 )
+        else:
+            self.matA = descrL
 
         # Specify that A is Lower-Triangular and Non-Unit diagonal
         fill_mode = np.array(cusparse.CUSPARSE_FILL_MODE_LOWER, dtype=np.int32)
