@@ -46,7 +46,7 @@ def neumann(A0, k, v0, x):
     kernels.axpby(1.0,v0, 0.0,x)
     for _ in range(k):
         # A0v = A0^{j+1}v0
-        spmv(A0, v, A0v)
+        kernels.spmv(A0, v, A0v)
         # x += v0 to yield x_k
         kernels.axpby(1.0, A0v, 1.0, x)
         # swap the vectors
