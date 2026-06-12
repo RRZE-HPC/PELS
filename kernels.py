@@ -322,14 +322,12 @@ def perf_report():
 from matrix_generator import create_matrix
 from timeit import timeit
 
-def spmv_bench(matrix, mat_fmt='CRS', rcm=False, arrow=False):
+def spmv_bench(matrix, mat_fmt='CRS', rcm=False, arrow=False, seed=314159265):
 
-    # make runs reproducible
-    rand_seed=314159265
-    np.random.seed(rand_seed)
+    np.random.seed(seed)
 
     if type(matrix) == str:
-        A = create_matrix(matrix, rcm=rcm, imbal=arrow)
+        A, p = create_matrix(matrix, rcm=rcm, imbal=arrow)
     elif type(matrix) == scipy.sparse.csr_matrix:
         A = matrix
         if imbal or rcm:
@@ -369,3 +367,12 @@ def spmv_bench(matrix, mat_fmt='CRS', rcm=False, arrow=False):
     #perf_report()
     print(f'Performance [GFlop/s] = {2*iter*A.nnz*1e-9/elapsed_seconds}')
     perf_report()
+
+if __name__ == '__main__':
+    from pels_args import *
+    parser = get_pcg_argparser()
+    args = parser.parse_args()
+    fmt = args.fmt
+    if fmt == 'SELL':
+        fmt = f'SELL-{args.C}-{args.sigma}'
+    spmv_bench(matrix=args.matrix, mat_fmt=fmt, rcm=args.rcm, seed=args.seed, arrow=False)

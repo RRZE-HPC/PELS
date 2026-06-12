@@ -39,9 +39,9 @@ def get_pcg_argparser():
                          'E.g., "Laplace128x64", '+
                          '"Laplace50x50x50", or "LinElast100x50" (latter requires pyamg).\n'
                          'Strings ending on ".mm", ".mtx", ".mm.gz" or ".mtx.gz" are interepted as MatrixMarket file names.')
-        parser.add_argument('-rcm', action=BooleanOptionalAction,
+    parser.add_argument('-rcm', action=BooleanOptionalAction,
                     help='Perform RCM (Reverse Cuthill-McKee) pre-ordering of the matrix to improve spmv and preconditioner performance')
-parser.add_argument('-maxit', type=int, default=1000,
+    parser.add_argument('-maxit', type=int, default=1000,
                     help='Maximum number of CG iterations allowed.')
     parser.add_argument('-tol', type=float, default=1e-6,
                     help='Convergence criterion: ||b-A*x||_2/||b||_2<tol')
