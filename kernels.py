@@ -330,7 +330,7 @@ def spmv_bench(matrix, mat_fmt='CRS', rcm=False, arrow=False, seed=314159265):
         A, p = create_matrix(matrix, rcm=rcm, imbal=arrow)
     elif type(matrix) == scipy.sparse.csr_matrix:
         A = matrix
-        if imbal or rcm:
+        if arrow or rcm:
             print('Warning: <imbal> and <rcm> flags to spmv_bench are ignored if you pass in a matrix instead of a string.')
     else:
         raise ValueError(f'argument "matrix" must be eithr a string or a csr_matrix object. Got "{type(matrix)}".')
