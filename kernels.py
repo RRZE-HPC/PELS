@@ -322,16 +322,18 @@ def perf_report():
 from matrix_generator import create_matrix
 from timeit import timeit
 
-def spmv_bench(matrix, mat_fmt='CRS', arrow=False):
+def spmv_bench(matrix, mat_fmt='CRS', rcm=False, arrow=False):
 
     # make runs reproducible
     rand_seed=314159265
     np.random.seed(rand_seed)
 
     if type(matrix) == str:
-        A = create_matrix(matrix, imbal=arrow)
+        A = create_matrix(matrix, rcm=rcm, imbal=arrow)
     elif type(matrix) == scipy.sparse.csr_matrix:
         A = matrix
+        if imbal or rcm:
+            print('Warning: <imbal> and <rcm> flags to spmv_bench are ignored if you pass in a matrix instead of a string.')
     else:
         raise ValueError(f'argument "matrix" must be eithr a string or a csr_matrix object. Got "{type(matrix)}".')
     N = A.shape[0]

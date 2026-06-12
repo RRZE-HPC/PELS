@@ -16,7 +16,6 @@ from time import perf_counter
 import cupy as cp
 from cupy.cuda import cusolver, cusparse
 from cupyx.scipy.sparse.linalg import spilu as cupy_spilu
-import pymetis
 
 import kernels
 from cuda_precon import *
@@ -106,37 +105,6 @@ def cusparse_neumann(matA, k, v0, x, n, dtype, nnz, handle, v_tmp, buf):
 
     cusparse.destroyDnVec(matX)
     cusparse.destroyDnVec(matV)
-
-def apply_metis_preordering(A, x_ex, b):
-
-    '''
-    Given a linear system A x_ex = b, where x_ex is the exact solution,
-    returns A_p, x_ex_p, b_p s.t. A_p x_ex_p = b_p, and the '_p' matrices
-    /vectors are consistent permutations of there input counterparts.
-    A_p retains symmetry and should have a more favorable pattern for subsequent
-    (incomplete) factorization, as with IChol.
-    '''
-    # Compute Nested Dissection permutation using PyMetis
-    # Metis expects a graph WITHOUT self-loops (diagonal entries).
-    n = A.shape[0]
-    adjacency = [
-             [j for j in A.indices[A.indptr[i] : A.indptr[i+1]] if j != i]
-                for i in range(n)
-            ]
-
-    # iperm[i] is the vertex at position i of the new ordering.
-    _, p = pymetis.nested_dissection(adjacency)
-    p = np.array(p, dtype=int)
-
-    # Pre-permute the matrix A_p = A[p, p]
-    A_p    = A[p, :][:, p]
-    x_ex_p = x_ex[p]
-    b_p    = b[p]
-    return A_p, x_ex_p, b_p
-
-
-
-
 
 
 class FastTrsv:

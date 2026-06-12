@@ -14,6 +14,7 @@ import scipy
 from scipy.sparse import *
 from scipy.io import mmread
 import re
+from scipy.sparse.csgraph import reverse_cuthill_mckee as rcm
 
 try:
     import pyamg
@@ -46,9 +47,16 @@ def parse_matstring(input):
     return label, nx, ny, nz
 
 
+def rcm_reordering(A):
+    p = rcm(A)
+    return A[p, :][:, p], p
 
 
-def create_matrix(matstring, imbal=False):
+
+
+
+
+def create_matrix(matstring, rcm=False, imbal=False):
 
     if matstring.endswith(('.mm','.mtx','.mm.gz','.mtx.gz')):
         A = csr_matrix(mmread(matstring))
@@ -61,7 +69,7 @@ def create_matrix(matstring, imbal=False):
         elif pyamg is not None:
             if label == 'LinElast':
                 if nz>1:
-                    raise('LinElast<nx>x<ny> only available in 2D')
+                    raise(ValueError('LinElast<nx>x<ny> only available in 2D'))
                 # linear elasticity stiffness matrix A (on a regular, quadrilateral mesh)
                 # B are the rigid-body modes (the nullspace of A), we ignore them but they
                 # could be used for preconditioning.
@@ -74,8 +82,12 @@ def create_matrix(matstring, imbal=False):
                 raise(ValueError('matrix string "'+label+'" not supported, only "Laplace" or "LinElast" are, right now,\n'
                                  'or read matrix market (*.mm[.gz] or *.mtx[.gz])'))
 
+    p = None
+    if rcm:
+        A, p = rcm_reordering(A)
+
     if(imbal==False):
-        return A
+        return A, p
     else:
         N=A.shape[0]
         rowInd=np.zeros(2*N-1, dtype=int)
@@ -91,7 +103,7 @@ def create_matrix(matstring, imbal=False):
             rowInd[N+i]=i
         arrow=csr_matrix((data, (rowInd, colInd)), shape=(N,N))
 
-        return A+arrow
+        return A+arrow, p
 
 def create_laplacian(nx,ny):
     N=nx*ny
