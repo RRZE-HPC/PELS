@@ -32,7 +32,8 @@ def get_pcg_argparser():
     For a full list, run your driver with the --help optino.
     '''
     parser = ArgumentParser(description='Run a CG benchmark.',
-                            formatter_class=RawTextHelpFormatter)
+                            formatter_class=RawTextHelpFormatter,
+                            allow_abbrev=False)
 
     parser.add_argument('-matrix', type=str, default=None,
                     help='Matrix to be generated or read from a MatrixMarket file.\n'+
