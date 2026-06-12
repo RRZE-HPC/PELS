@@ -1,6 +1,6 @@
 from argparse import *
 
-def get_pcg_args(args_dict):
+def get_pcg_args(args_dict, parse_commandline=True):
     '''
     Get an args struct combining input from
     - the command-line, e.g. "-precon IC"
@@ -13,10 +13,15 @@ def get_pcg_args(args_dict):
     args.ic_fill    = 3
     ...
     where all other possible arguments are present with default values.
+
+    If parse_commandline is False, only the dictionary is used (plus defaults).
     '''
     parser = get_pcg_argparser()
     args_ini = Namespace(**args_dict)
-    args = parser.parse_args(namespace=args_ini)
+    if parse_commandline:
+        args = parser.parse_args(namespace=args_ini)
+    else:
+        args = parser.parse_args(args=[], namespace=args_ini)
     return args
 
 

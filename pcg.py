@@ -121,18 +121,19 @@ import precon
 from matrix_generator import create_matrix
 from pels_args import *
 
-def pcg_demo(args_dict={}):
+def pcg_demo(args_dict={}, parse_commandline=False):
     '''
     This is a driver routine that can be called from a Jupyter notebook,
-    with argujments in a Python dict. For example:
+    with arguments in a Python dict. For example:
 
     d = {'matrix': 'Laplace100x100', 'fmt': 'SELL', 'C': 128, 'maxit': 500, 'tol': 1.0e-3}
-    pcg_demo(d)
+    pcg_demo(d, parse_commandline=False)
 
-    Additional arguments are read from the command-line, and defaults are set for any unspecified parameters.
+    If parse_commandline is set to True, additional arguments are read from the command-line.
+    Defaults are set for any unspecified parameters.
     The '--help' option can be used to get information about all possible parameters.
     '''
-    args = get_pcg_args(args_dict)
+    args = get_pcg_args(args_dict, parse_commandline=parse_commandline)
 
     if args.seed is not None:
         np.random.seed(args.seed)
@@ -263,4 +264,6 @@ def pcg_demo(args_dict={}):
 
 if __name__ == '__main__':
     # by default, the driver gets all arguments from the command-line
-    pcg_demo()
+    d = {'matrix': 'Laplace128x128', 'fmt': 'SELL', 'sigma': 128}
+    pcg_demo(d)
+
