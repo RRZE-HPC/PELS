@@ -93,7 +93,7 @@ def cg_solve(A, M, b, x0, tol, maxit, verbose=True, x_ex=None):
         else:
             res_norm_sq = rho
 
-        if verbose:
+        if verbose and iter%10==0:
             if x_ex is not None:
                 axpby(1.0, x, 0.0, err)
                 axpby(-1.0, x_ex, 1.0, err)
