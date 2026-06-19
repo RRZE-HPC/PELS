@@ -200,6 +200,7 @@ def pcg_demo(args_dict={}, parse_commandline=False):
     # runtime as predicted by the roofline model, so reset all
     # counters and timers:
     reset_counters()
+    precon.reset_counters()
 
     M=None
     t0 = perf_counter()

@@ -28,6 +28,11 @@ calls = {'setup': 0, 'apply': 0}
 # total elapsed time in seconds
 time = {'setup': 0, 'apply': 0.0}
 
+def reset_counters():
+    for k in calls.keys():
+        calls[k] = 0.0
+        time[k] = 0.0
+
 def invert(v):
     cu_invert.forall(v.size)(v)
     cuda.synchronize()
