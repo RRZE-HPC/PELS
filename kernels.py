@@ -8,49 +8,19 @@
 #/*                                                                                         */
 #/*******************************************************************************************/
 
+import sys
+import os
 from time import perf_counter
+
 import numpy as np
 import scipy
 import numba
 
 import sellcs
 
-import sys
-import os
-
-have_c_kernels = False
-have_RACE = False
-
-try:
-    import kernels_cpu as cpu
-    have_c_kernels=True
-    print('Using C kernels on CPU')
-except:
-    print('Failed to import/compile C kernels, you may need to adjust "make.inc".\n')
-
-
-if '-use_RACE' in sys.argv or 'USE_RACE' in os.environ:
-    import race_mpk
-    print('RACE is loaded and available.')
-    have_RACE = race_mpk.have_RACE
-
-if '-use_INTEL_MKL' in sys.argv or 'USE_INTEL_MKL' in os.environ:
-    import intel_mkl
-    print('Intel MKL is loaded and available.')
-    have_MKL = intel_mkl.have_MKL
-    
-# for benchmarking numpy/scipy implementations,
-# uncomment this line instead of the above:
-#import kernels_numpy as cpu
-
-try:
-    from numba import cuda
-    from numba.cuda import is_cuda_array
-    import kernels_gpu as gpu
-except:
-    print('Could not load cuda module and/or kernels')
-    gpu = cpu
-    cuda = None
+from numba import cuda
+from cuda_kernels import *
+from cupy_kernels import *
 
 def available_gpus():
     if cuda is None or (os.environ.get('USE_CPU')=="1" or os.environ.get('USE_CPU')=="True"):
@@ -65,56 +35,82 @@ def compile_all():
     y=np.ones(n,dtype='float64')
     a=numba.float64(1.0)
     b=numba.float64(1.0)
-    A1=scipy.sparse.csr_matrix(scipy.sparse.rand(n,n,0.6))
+    A1=(scipy.sparse.rand(n,n,0.6) + scipy.sparse.eye(n,n)).tocsr()
+    L =scipy.sparse.tril(A1).tocsr()
     A2=sellcs.sellcs_matrix(A1, C=1, sigma=1)
 
-    # compile CPU kernels:
+    # compile GPU kernels:
+    if available_gpus()==0:
+        raise 'no GPU available!'
+    x = to_device(x)
+    tmp = from_device(x)
+    y = to_device(x)
+    A1 = to_device(A1)
+    L = to_device(L)
+    tmp= from_device(A1)
+    A2 = to_device(A2)
+    tmp = from_device(A2)
     init(x,a)
     z = clone(x)
     s=dot(x,y)
     axpby(a,x,b,y)
     spmv(A1,x,y)
     spmv(A2,x,y)
-    # compile GPU kernels:
-    if available_gpus()>0:
-        x = to_device(x)
-        tmp = from_device(x)
-        y = to_device(x)
-        A1 = to_device(A1)
-        tmp= from_device(A1)
-        A2 = to_device(A2)
-        tmp = from_device(A2)
-        init(x,a)
-        z = clone(x)
-        s=dot(x,y)
-        axpby(a,x,b,y)
-        spmv(A1,x,y)
-        spmv(A2,x,y)
-        diag_spmv(A1,x,y)
+    trsv(L,x,y)
+    diag_spmv(A1,x,y)
     reset_counters()
 
-def memory_benchmarks(type):
-    if type=='cpu':
-        return cpu.memory_benchmarks()
-    elif type=='gpu':
-        return gpu.memory_benchmarks()
+def to_device(A):
+
+    # these seem to be essentially the same:
+    if type(A) == scipy.sparse.csr_array:
+        A = scipy.sparse.csr_matrix(A)
+    if type(A) == scipy.sparse.csc_array:
+        A = scipy.sparse.csc_matrix(A)
+    if (type(A) == scipy.sparse.csr_matrix or
+        type(A) == scipy.sparse.csc_matrix or
+        type(A) == sellcs.sellcs_matrix):
+        A.cu_data = cuda.to_device(A.data)
+        A.cu_indptr = cuda.to_device(A.indptr)
+        A.cu_indices = cuda.to_device(A.indices)
+        return A
+    elif type(A) == scipy.sparse.dia_matrix:
+        A.cu_data = cuda.to_device(A.data.reshape(A.data.size*A.offsets.size))
+        A.cu_offsets = cuda.to_device(A.offsets)
+        return A
     else:
-        raise('type should be "cpu" or "gpu"')
+        return cuda.to_device(A)
+
+def from_device(A):
+    if type(A) == scipy.sparse.csr_matrix or type(A) == sellcs.sellcs_matrix:
+        A.data = A.cu_data.copy_to_host()
+        A.indices = A.cu_indices.copy_to_host()
+        A.indptr = A.cu_indptr.copy_to_host()
+        return A
+    else:
+        return A.copy_to_host()
+
+def to_host(A):
+    if cuda.is_cuda_array(A):
+        return A.copy_to_host()
+    elif type(A)==scipy.sparse.csr_matrix or type(A)==sellcs.sellcs_matrix:
+        if available_gpus()>0:
+            A.indptr = A.cu_indptr.copy_to_host()
+            A.data = A.cu_data.copy_to_host()
+            A.indices = A.cu_indices.copy_to_host()
+    return A
+
 
 # total number of calls
-calls = {'spmv': 0, 'axpby': 0, 'dot': 0, 'init': 0}
+calls = {'trsv': 0, 'spmv': 0, 'axpby': 0, 'dot': 0, 'init': 0}
 # total elapsed time in seconds
-time = {'spmv': 0.0, 'axpby': 0.0, 'dot': 0.0, 'init':0.0}
+time = {'trsv': 0, 'spmv': 0.0, 'axpby': 0.0, 'dot': 0.0, 'init':0.0}
 # total loaded data in GB
-load = {'spmv': 0.0, 'axpby': 0.0, 'dot': 0.0, 'init':0.0}
+load = {'trsv': 0.0, 'spmv': 0.0, 'axpby': 0.0, 'dot': 0.0, 'init':0.0}
 # total stored data in GB
-store = {'spmv': 0.0, 'axpby': 0.0, 'dot': 0.0, 'init':0.0}
+store = {'trsv': 0.0, 'spmv': 0.0, 'axpby': 0.0, 'dot': 0.0, 'init':0.0}
 # total floating point operations [GFlop]
-flop = {'spmv': 0.0, 'axpby': 0.0, 'dot': 0.0, 'init':0.0}
-
-# which benchmark to use for predicting memory bandwidth achievable by an operation.
-# Benchmark values are currently hard-coded into kernels_cpu.py and kernels_gpu.py for Sapphire Rapids and A100, resp.
-bench_map = {'spmv': 'triad', 'axpby': 'triad', 'dot': 'load', 'init': 'store'}
+flop = {'trsv': 0.0, 'spmv': 0.0, 'axpby': 0.0, 'dot': 0.0, 'init':0.0}
 
 def reset_counters():
     for k in calls.keys():
@@ -135,54 +131,24 @@ def same_array(x,y):
     else:
         return False
 
-def to_device(A):
-    '''
-    If a GPU is found, this creates CUDA arrays and copies data to the device.
-    On the CPU, we check if '-numa' is set on the command-line, and if so,
-    copy the data arrays with correct first-touch initialization.
-    '''
-    if available_gpus()>0:
-        return gpu.to_device(A)
-    else:
-        if '-numa' in sys.argv:
-            A = copy(A)
-        return A
+def csr_spmv(valA,rptrA,colA, x, y):
+        nrows = len(x)
+        cu_csr_spmv.forall(nrows)(valA,rptrA,colA,x,y)
+        cuda.synchronize()
 
-def from_device(A):
-    if available_gpus()>0:
-        return gpu.from_device(A)
-    else:
-        return A
+def sell_spmv(valA,cptrA,colA, C, x, y):
+        nchunks = len(cptrA)-1
+        cu_sell_spmv[nchunks, C](valA, cptrA, colA, C, x, y)
+        cuda.synchronize()
 
-def to_host(A):
-    if cuda and is_cuda_array(A):
-        return A.copy_to_host()
-    elif type(A)==scipy.sparse.csr_matrix or type(A)==sellcs.sellcs_matrix:
-        if available_gpus()>0:
-            A.indptr = A.cu_indptr.copy_to_host()
-            A.data = A.cu_data.copy_to_host()
-            A.indices = A.cu_indices.copy_to_host()
-    return A
 
 def spmv(A, x, y):
     t0 = perf_counter()
-    if cuda and is_cuda_array(x):
-        if not hasattr(A, 'cu_data'):
-            print('PerfWarning: copying matrix data to device in spmv call. Manually call kernels.to_device(A) to avoid this.')
-            A = to_device(A)
-        run_on = gpu
-        data = A.cu_data
-        indptr = A.cu_indptr
-        indices = A.cu_indices
-    else:
-        run_on = cpu
-        data = A.data
-        indptr = A.indptr
-        indices = A.indices
+
     if type(A)==scipy.sparse.csr_matrix:
-        run_on.csr_spmv(data, indptr, indices, x, y)
+        csr_spmv(A.cu_data, A.cu_indptr, A.cu_indices, x, y)
     elif type(A)==sellcs.sellcs_matrix:
-        run_on.sell_spmv(data, indptr, indices, A.C, x, y)
+        sell_spmv(A.cu_data, A.cu_indptr, A.cu_indices, A.C, x, y)
     else:
         raise TypeError('spmv wrapper only implemented for scipy.sparse.csr_matrix or sellcs.sellcs_matrix')
     t1 = perf_counter()
@@ -192,112 +158,54 @@ def spmv(A, x, y):
     store['spmv'] += 8*A.shape[0]
     flop['spmv'] += 2*A.nnz
 
-def diag_spmv(A, x, y):
-    if cuda and is_cuda_array(x):
-        gpu.vscale(A.cu_data, x, y)
-    else:
-        cpu.vscale(A.data.reshape(x.size), x, y)
+def trsv(L, b, x, transpose=False):
+    '''
+    Solves (i) Lx=b for x if transpose==False, or
+          *ii) L^Tx=b     if transpose==True,
 
-def mpk_get_perm(mpk_handle, N):
-    if not have_RACE:
-        raise AssertionError('RACE is not available, you may need to add the -use_RACE flag and/or install the RACE library.')
-    return race_mpk.csr_mpk_get_perm(mpk_handle, N)
+    where L is a sparse lower triangular matrix with
+    non-zero diagonal. Elements in each row must be stored
+    such that the diagonal is the last entry, but strict sorting
+    is not required.
+    '''
 
-def mpk_setup(A, power, cacheSize, split):
-    if not have_RACE:
-        raise AssertionError('RACE is not available, you may need to add the -use_RACE flag and/or install the RACE library.')
-    if type(A)==scipy.sparse.csr_matrix:
-        data = A.data
-        indptr = A.indptr
-        indices = A.indices
-        mpk_handle=race_mpk.csr_mpk_setup(indptr, indices, data, power, cacheSize, split)
-        return mpk_handle
-
-def mpk_free(mpk_handle):
-    if not have_RACE:
-        raise AssertionError('RACE is not available, you may need to add the -use_RACE flag and/or install the RACE library.')
-    race_mpk.csr_mpk_free(mpk_handle)
-
-def mpk(mpk_handle,k,x,y):
-    #t0 = perf_counter()
-    race_mpk.csr_mpk(mpk_handle, k, x, y)
-    #t1 = perf_counter()
-
-        
-def mpk_neumann_apply(polyHandle, x, y):
     t0 = perf_counter()
-    k= polyHandle.k
-    race_mpk.csr_mpk_neumann_apply(polyHandle.mpkHandle, k, x, y)
+
+    if type(L)==scipy.sparse.csr_matrix or type(L)==scipy.sparse.csc_matrix:
+        cp_trsv(L, b, x, transpose)
+    elif type(L)==sellcs.sellcs_matrix:
+        raise Exception('trsv only implemented for csr or csc matrices so far -- got sellcs_matrix')
+    else:
+        raise TypeError('trsv wrapper only implemented for scipy.sparse.csr_matrix or scipy.sparse.csc_matrix -- got '+str(type(L)))
+    cuda.synchronize()
     t1 = perf_counter()
-    time['spmv']  += t1-t0
-    calls['spmv'] += 2*k+1
-    if calls['spmv']>0:
-        load['spmv']  += (k+1)*(12*polyHandle.A1.nnz)-2*k*8*(polyHandle.A1.shape[1])+(2*k+1)*8*(polyHandle.A1.shape[0]+polyHandle.A1.shape[1])
-        store['spmv'] += (2*k+1)*8*polyHandle.A1.shape[0]
-        flop['spmv'] += (k+1)*2*polyHandle.A1.nnz-(2*k*2*polyHandle.A1.shape[1])
+    time['trsv']  += t1-t0
+    calls['trsv'] += 1
+    load['trsv']  += 12*L.nnz+8*(L.shape[0]+L.shape[1])
+    store['trsv'] += 8*L.shape[0]
+    flop['trsv'] += 2*L.nnz
+
+def diag_spmv(A, x, y):
+    cu_vscale.forall(x.size)(A.cu_data, x, y)
 
 
-def ilu0_setup(A):
-    if not have_MKL:
-        raise AssertionError('MKL is not available. Cannot use ILU preconditioner')
-    if type(A)==scipy.sparse.csr_matrix:
-        data = A.data
-        indptr = A.indptr
-        indices = A.indices
-        indptr_one_based = indptr + 1
-        indices_one_based = indices + 1
-        ipar=np.zeros(128,dtype='int32')
-        dpar=np.zeros(128,dtype='float64')
-        ierr = 0
-        val_ILU=np.zeros(A.nnz,dtype='float64')
-        intel_mkl.mkl_ilu0_setup(indptr_one_based, indices_one_based, data, val_ILU, ipar, dpar, ierr)
-        if(ierr != 0):
-            print("Error in ILU preconditioner setup")
-            
-        ilu = scipy.sparse.csr_matrix((val_ILU, indices, indptr), shape=A.shape)
-        return ilu
-
-#Setup for solving for Ax=b
-def trsv_setup(lower, A):
-    handle=None
-    if not have_MKL:
-        raise AssertionError('MKL is not available. Cannot use ILU preconditioner')
-    if type(A)==scipy.sparse.csr_matrix:
-        data = A.data
-        indptr = A.indptr
-        indices = A.indices
-        handle = intel_mkl.mkl_sparse_trsv_setup(lower, indptr, indices, data)
-    else:
-        raise TypeError('trsv_setup only implemented for scipy.sparse.csr_matrix')
-    return handle
-        
-#Solves for Ax=b
-def trsv(lower,handle,b,x):
-    if not have_MKL:
-        raise AssertionError('MKL is not available. Cannot use ILU preconditioner')
-    if handle==None:
-        raise AssertionError('TRSV setup not called or error occured during setup.')
-    else:
-        intel_mkl.mkl_sparse_trsv(lower, handle, b, x)
-        
-#Free TRSV
-def trsv_free(handle):
-    if not have_MKL:
-        raise AssertionError('MKL is not available. Cannot use ILU preconditioner')
-    if handle==None:
-        raise AssertionError('TRSV setup not called or error occured during setup.')
-    else:
-        intel_mkl.mkl_sparse_trsv_free(handle)
-
+def csr_trsv(valL,rptrL,colL, x, b, transpose=False):
+        '''
+        Call CUDA CSR triangular solve kernel. See trsv
+        function for description (and use it as entry point, not this one)
+        '''
+        nrows = len(x)
+        flag = cuda.device_array(x.shape, dtype=np.int8)
+        init(flag, np.int8(0))
+        if transpose==False:
+            cu_csr_trsv.forall(nrows)(valL,rptrL, colL, x,b, flag)
+        else:
+            cu_csr_trsv_trans.forall(nrows)(valL,rptrL, colL, x, b, flag)
+        cuda.synchronize()
 
 def clone(v):
     w = None
-    if cuda and is_cuda_array(v):
-        w = cuda.device_array(shape=v.shape,dtype=v.dtype)
-    else:
-        w = np.empty_like(v)
-        # first-touch initialization
-        cpu.init(w,0.0)
+    w = cuda.device_array(shape=v.shape,dtype=v.dtype)
     return w
 
 def permute_csr(X, perm):
@@ -308,41 +216,21 @@ def permute_csr(X, perm):
     else:
         print("Error: permute_csr only applicable for scipy csr matrices. Retrning unpermuted matrix")
         return X
-        
+
 def copy(X):
     '''
     Copy a vector or matrix (csr_matrix or sellcs_matrix)
     that may live on a GPU, and assure first-touch initialization
     on the CPU.
     '''
-    if cuda and is_cuda_array(X):
-        Y = cuda.device_array_like(X)
-        Y[:] = X[:]
-        return Y
-    elif type(X) == np.ndarray:
-        return cpu.copy_vector(X)
-    elif type(X) == scipy.sparse.csr_matrix or type(X) == sellcs.sellcs_matrix:
-        data, indices, indptr = cpu.copy_csr_arrays(X.data, X.indptr, X.indices)
-        if type(X) == scipy.sparse.csr_matrix:
-            A = scipy.sparse.csr_matrix((data, indices, indptr), shape=X.shape)
-        elif type(X) == sellcs.sellcs_matrix:
-            permute = cpu.copy_vector(X.permute)
-            unpermute = cpu.copy_vector(X.unpermute)
-            A = sellcs.sellcs_matrix(A_arrays=(data, indices, indptr, permute, unpermute,X.nnz), shape=X.shape, C=X.C, sigma=X.sigma)
-        if hasattr(X, 'cu_data'):
-            A.cu_data = X.cu_data.copy()
-        if hasattr(X, 'cu_indices'):
-            A.cu_indices = X.cu_indices.copy()
-        if hasattr(X, 'cu_indptr'):
-            A.cu_indptr = X.cu_indptr.copy()
-        return A
+    Y = cuda.device_array_like(X)
+    Y[:] = X[:]
+    return Y
 
 def init(v, val):
     t0 = perf_counter()
-    if cuda and is_cuda_array(v):
-        gpu.init(v,val)
-    else:
-        cpu.init(v,val)
+    cu_init.forall(v.size)(v,val)
+    cuda.synchronize()
     t1 = perf_counter()
     calls['init'] += 1
     time['init']  += t1-t0
@@ -350,10 +238,8 @@ def init(v, val):
 
 def axpby(a,x,b,y):
     t0 = perf_counter()
-    if cuda and is_cuda_array(y):
-        gpu.axpby(a,x,b,y)
-    else:
-        cpu.axpby(a,x,b,y)
+    cu_axpby.forall(x.size)(a,x,b,y)
+    cuda.synchronize()
     t1 = perf_counter()
     time['axpby']  += t1-t0
     calls['axpby'] += 1
@@ -363,18 +249,41 @@ def axpby(a,x,b,y):
 
 def dot(x,y):
     t0 = perf_counter()
-    if cuda and is_cuda_array(y):
-        s = gpu.dot(x,y)
-    else:
-        s = cpu.dot(x,y)
+    #
+    # note: we could do "forall" here as well,
+    # but the cu_dot implementation requires that
+    # the threads per block are a power of two. This
+    # is almost certainly the case by default, but to be
+    # sure, we enforce it here.
+    ThreadsPerBlock = 128
+    BlocksPerGrid   =1024
+#    BlocksPerGrid   = min(32, (x.size+ThreadsPerBlock-1)//ThreadsPerBlock)
+    s = cuda.device_array(shape=(1), dtype=np.float64)
+    s[0] = 0.0
+    cu_dot[BlocksPerGrid,ThreadsPerBlock](x,y,s)
+    cuda.synchronize()
     t1 = perf_counter()
     time['dot']  += t1-t0
     calls['dot'] += 1
     load['dot']  += (2-same_array(x,y))*8*x.size
     flop['dot'] += 2*x.size
-    return s
+    return s.copy_to_host()[0]
 
-def perf_report(type):
+def vscale(v, x, y):
+    '''
+    Helper function to compute y = v.*x (element-wise multiplication of vectors)
+    '''
+    cu_vscale.forall(v.size)(v,x,y)
+    cuda.synchronize()
+
+def vscale_inplace(v, x):
+    '''
+    Helper function to compute x = v.*x (in-place element-wise multiplication of vectors)
+    '''
+    cu_vscale_inplace.forall(v.size)(v,x)
+    cuda.synchronize()
+
+def perf_report():
     '''
     After running a solver, print a performance summary of the
     kernels in this module (dot, axpby, spmv...). The argument 'type'
@@ -382,9 +291,11 @@ def perf_report(type):
     ran. It can be used to get some benchmark values from files cpu.json or
     gpu.json, but we currently ignore them.
     '''
-    if type == 'cpu':
-        nthreads = numba.get_num_threads()
-        print('Number of threads: %d'%(nthreads))
+
+    device = cuda.get_current_device()
+
+    # The 'name' attribute usually contains the model string (e.g., 'NVIDIA GeForce RTX 3080')
+    print('Hardware: '+str(device.name))
 
     # total measured time
     t_tot  = 0
@@ -396,7 +307,7 @@ def perf_report(type):
     print('--------\t-----\t---------------\t---------------\t---------------')
     print('kernel  \tcalls\t bw_estimate   \t t_meas        \t t_meas/call   ')
     print('========\t=====\t===============\t===============\t===============')
-    for kern in ('dot', 'axpby', 'spmv'):
+    for kern in ('dot', 'axpby', 'spmv', 'trsv'):
         if calls[kern]>0:
             t_tot += time[kern]
             total_calls += calls[kern]
@@ -406,3 +317,62 @@ def perf_report(type):
     print('--------\t-----\t---------------\t---------------')
     print('%8s\t     \t               \t               \t %8.4g s '%('Total',t_tot))
     print('--------\t-----\t---------------\t---------------')
+
+
+from matrix_generator import create_matrix
+from timeit import timeit
+
+def spmv_bench(matrix, mat_fmt='CRS', rcm=False, arrow=False, seed=314159265):
+
+    np.random.seed(seed)
+
+    if type(matrix) == str:
+        A, p = create_matrix(matrix, rcm=rcm, imbal=arrow)
+    elif type(matrix) == scipy.sparse.csr_matrix:
+        A = matrix
+        if arrow or rcm:
+            print('Warning: <imbal> and <rcm> flags to spmv_bench are ignored if you pass in a matrix instead of a string.')
+    else:
+        raise ValueError(f'argument "matrix" must be eithr a string or a csr_matrix object. Got "{type(matrix)}".')
+    N = A.shape[0]
+    print(f'nnz = {A.nnz}, nrows = {N}, nnzr = {float(A.nnz)/float(N):4.2g}')
+    if 'SELL' in mat_fmt:
+        C_=int(mat_fmt.split('-')[1])
+        if C_ > 256:
+            print('C greater than 256. Setting to maximum possible value 256')
+            C_ = 256
+        sigma_=int(mat_fmt.split('-')[2])
+        print(f'Matrix format: SELL-{C_}-{sigma_}')
+        A = sellcs.sellcs_matrix(A_csr=A, C=C_, sigma=sigma_)
+    else:
+        print('Matrix format: CSR')
+
+    # transfer matrix and vectors to the GPU
+    A = to_device(A)
+    x = to_device(np.random.rand(N))
+    y = to_device(np.random.rand(N))
+
+    #run the kernel once to avoid timing just-in-time compilation
+    spmv(A,x,y)
+    #warm-up, determine iterations for 1 sec
+    iter = 10
+    elapsed_seconds = timeit(lambda: spmv(A,x,y), number=iter)
+    iter = max(1, int(iter // elapsed_seconds))
+
+    reset_counters()
+
+    # run actual benchmark
+    elapsed_seconds = timeit(lambda: spmv(A,x,y), number=iter)
+
+    #perf_report()
+    print(f'Performance [GFlop/s] = {2*iter*A.nnz*1e-9/elapsed_seconds}')
+    perf_report()
+
+if __name__ == '__main__':
+    from pels_args import *
+    parser = get_pcg_argparser()
+    args = parser.parse_args()
+    fmt = args.fmt
+    if fmt == 'SELL':
+        fmt = f'SELL-{args.C}-{args.sigma}'
+    spmv_bench(matrix=args.matrix, mat_fmt=fmt, rcm=args.rcm, seed=args.seed, arrow=False)
